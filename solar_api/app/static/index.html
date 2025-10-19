@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>☀️ Solar Power Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    :root{
+      --bg:#0d1117;--card:#161b22;--border:#30363d;
+      --blue:#3b82f6;--cyan:#06b6d4;--text:#e5e7eb;--muted:#9ca3af;
+    }
+    body{margin:0;font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);}
+    header{display:flex;justify-content:space-between;align-items:center;
+      padding:16px 24px;border-bottom:1px solid var(--border);
+      background:linear-gradient(90deg,#0f172a,#1e293b);}
+    header h1{display:flex;gap:8px;align-items:center;color:var(--blue);}
+    .app-container{max-width:1300px;margin:auto;padding:1rem 1.5rem;}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;margin-top:1rem;}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1rem;text-align:center;}
+    .card h3{color:var(--muted);margin:0 0 6px}
+    .v{font-size:28px;font-weight:800;color:var(--blue);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .input-sections{display:flex;gap:1rem;margin-top:1.5rem;flex-wrap:wrap;}
+    .input-section{flex:1;min-width:300px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1rem;display:flex;flex-direction:column;}
+    .input-section h2{color:var(--blue);}
+    input{padding:.5rem;margin:.3rem 0;border:1px solid var(--border);border-radius:8px;background:#0f172a;color:var(--text);}
+    .btn{background:var(--blue);color:#fff;border:none;border-radius:8px;padding:.6rem;font-weight:700;cursor:pointer;}
+    .manual-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;}
+    @media(max-width:900px){.manual-grid{grid-template-columns:repeat(2,1fr)}}
+    .charts{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-top:2rem;}
+    @media(max-width:1000px){.charts{grid-template-columns:1fr}}
+    .chart{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1rem;}
+    .report-box{margin-top:1rem;background:rgba(59,130,246,0.1);border:1px solid var(--border);border-radius:10px;padding:0.75rem;}
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span class="material-icons">wb_sunny</span> Solar Power Dashboard</h1>
+    <div id="currentDateTime"></div>
+  </header>
+
+  <div class="app-container">
+    <!-- Top summary cards -->
+    <div class="cards">
+      <div class="card"><h3>Current Power</h3><div class="v" id="currentPower">--</div><small>W</small></div>
+      <div class="card"><h3>Irradiance</h3><div class="v" id="currentIrradiance">--</div><small>W/m²</small></div>
+      <div class="card"><h3>Temperature</h3><div class="v" id="currentTemp">--</div><small>°C</small></div>
+      <div class="card"><h3>Efficiency</h3><div class="v" id="currentEfficiency">--</div><small>%</small></div>
+    </div>
+
+    <!-- Prediction sections -->
+    <div class="input-sections">
+      <div class="input-section">
+        <h2>🔹 Predict by Timestamp</h2>
+        <label>Select Date & Time:</label>
+        <input type="datetime-local" id="timestampInput"/>
+        <button class="btn" onclick="predictByTimestamp()">Predict</button>
+        <div class="report-box" id="predictionReport">
+          <strong>📄 Active Power Report:</strong><br>No data yet.
+        </div>
+      </div>
+
+      <div class="input-section">
+        <h2>🧮 Manual Input</h2>
+        <div class="manual-grid">
+          <input placeholder="Geff (W/m²)" id="Geff_Reference_Wm2" type="number"/>
+          <input placeholder="Temp (°C)" id="Ambient_Temp_degC" type="number"/>
+          <input placeholder="Humidity (%)" id="Relative_Humidity" type="number"/>
+          <input placeholder="Wind (m/s)" id="Wind_Speed_ms" type="number"/>
+          <input placeholder="Temp Test (°C)" id="Temperature_Test_degC" type="number"/>
+          <input placeholder="Soiling Geff (%)" id="Soiling_Geff" type="number"/>
+          <input placeholder="Soiling Isc (%)" id="Soiling_Isc" type="number"/>
+          <input placeholder="GHI (W/m²)" id="GHI_Wm2" type="number"/>
+          <input placeholder="POA1 (W/m²)" id="POA1_Wm2" type="number"/>
+          <input placeholder="Hour" id="hour" type="number" min="0" max="23"/>
+          <input placeholder="Month" id="month" type="number" min="1" max="12"/>
+        </div>
+        <button class="btn" onclick="predictManual()">Predict</button>
+      </div>
+    </div>
+
+    <!-- Charts section -->
+    <div class="charts">
+      <div class="chart"><h3>⚡ Power Trend (24h)</h3><canvas id="dailyChart"></canvas></div>
+      <div class="chart"><h3>🌤️ Energy Production (30d)</h3><canvas id="monthlyChart"></canvas></div>
+    </div>
+  </div>
+
+<script>
+const API_BASE = '';
+let dailyChart, monthlyChart;
+
+// Update the header datetime in real time
+function updateDateTime(){
+  const now = new Date();
+  document.getElementById('currentDateTime').textContent = now.toLocaleString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+updateDateTime(); 
+setInterval(updateDateTime,1000);
+
+// ✅ Automatically load top cards data from backend
+async function loadCurrentStats(){
+  try{
+    const res = await fetch(`${API_BASE}/data/current_stats/`);
+    const data = await res.json();
+    if(data.Status === '✅ Success'){
+      document.getElementById('currentPower').textContent = data.Predicted_Power.toFixed(2);
+      document.getElementById('currentIrradiance').textContent = data.Irradiance.toFixed(2);
+      document.getElementById('currentTemp').textContent = data.Temperature.toFixed(1);
+      document.getElementById('currentEfficiency').textContent = data.Efficiency.toFixed(1);
+    }
+  }catch(e){console.error("Error loading stats:", e);}
+}
+loadCurrentStats();
+setInterval(loadCurrentStats, 60000);
+
+// 🔹 Update the active power report text
+function updateReport(data){
+  const report=document.getElementById('predictionReport');
+  const p=data.Predicted_Power, t=data.Features['Ambient Temp. (degree centigrade)'], i=data.Features['Geff Reference (W/m2)'];
+  const eff=((p/70000)*100).toFixed(2);
+  report.innerHTML=`<strong>📄 Active Power Report:</strong><br>
+  Predicted Power: <strong>${p} W</strong><br>
+  Irradiance: <strong>${i.toFixed(2)} W/m²</strong><br>
+  Temp: <strong>${t.toFixed(1)} °C</strong><br>
+  Efficiency: <strong>${eff}%</strong>`;
+}
+
+// 🔹 Predict using timestamp
+async function predictByTimestamp(){
+  const v=document.getElementById('timestampInput').value;
+  if(!v)return alert('Select date/time');
+  const r=await fetch(`${API_BASE}/predict/by_time/`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({timestamp:v.replace('T',' ')+':00'})
+  });
+  const d=await r.json();
+  if(d.Status==='✅ Success'){
+    updateReport(d);
+    document.getElementById('currentPower').textContent=d.Predicted_Power;
+  }
+  else alert(d.detail||d.Message);
+}
+
+// 🔹 Predict using manual input
+async function predictManual(){
+  const ids=["Geff_Reference_Wm2","Ambient_Temp_degC","Relative_Humidity","Wind_Speed_ms","Temperature_Test_degC","Soiling_Geff","Soiling_Isc","GHI_Wm2","POA1_Wm2","hour","month"];
+  const payload={};for(const id of ids)payload[id]=parseFloat(document.getElementById(id).value);
+  if(Object.values(payload).some(v=>isNaN(v)))return alert('Fill all fields');
+  const r=await fetch(`${API_BASE}/predict/manual/`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload)
+  });
+  const d=await r.json();
+  if(d.Status==='✅ Success'){
+    updateReport(d);
+    document.getElementById('currentPower').textContent=d.Predicted_Power;
+  }
+  else alert(d.detail||d.Message);
+}
+
+// 🔹 Build the charts
+async function makeCharts(){
+  const d1=document.getElementById('dailyChart').getContext('2d');
+  const d2=document.getElementById('monthlyChart').getContext('2d');
+  if(dailyChart)dailyChart.destroy(); 
+  if(monthlyChart)monthlyChart.destroy();
+
+  const res=await fetch(`${API_BASE}/data/monthly_summary/`);
+  const json=await res.json();
+
+  dailyChart=new Chart(d1,{
+    type:'line',
+    data:{
+      labels:json.days.map(d=>`Day ${d}`),
+      datasets:[{
+        data:json.power,
+        borderColor:'#3b82f6',
+        backgroundColor:'rgba(59,130,246,.2)',
+        tension:.4,
+        fill:true
+      }]
+    },
+    options:{
+      plugins:{legend:{display:false}},
+      scales:{x:{grid:{color:'#222'}},y:{grid:{color:'#222'}}}
+    }
+  });
+
+  monthlyChart=new Chart(d2,{
+    type:'bar',
+    data:{
+      labels:json.days.map(d=>`Day ${d}`),
+      datasets:[{
+        data:json.power,
+        backgroundColor:'#3b82f6'
+      }]
+    },
+    options:{
+      plugins:{legend:{display:false}},
+      scales:{x:{grid:{color:'#222'}},y:{grid:{color:'#222'}}}
+    }
+  });
+}
+makeCharts();
+</script>
+</body>
+</html>
