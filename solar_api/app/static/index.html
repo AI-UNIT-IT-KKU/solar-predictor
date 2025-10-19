@@ -96,7 +96,9 @@ let dailyChart, monthlyChart;
 // Update the header datetime in real time
 function updateDateTime(){
   const now = new Date();
-  document.getElementById('currentDateTime').textContent = now.toLocaleString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  document.getElementById('currentDateTime').textContent = now.toLocaleString('en-US',{
+    weekday:'long',year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'
+  });
 }
 updateDateTime(); 
 setInterval(updateDateTime,1000);
@@ -121,7 +123,8 @@ setInterval(loadCurrentStats, 60000);
 function updateReport(data){
   const report=document.getElementById('predictionReport');
   const p=data.Predicted_Power, t=data.Features['Ambient Temp. (degree centigrade)'], i=data.Features['Geff Reference (W/m2)'];
-  const eff=((p/70000)*100).toFixed(2);
+  const cap = data.Capacity_W || 303709;
+  const eff = (data.Efficiency !== undefined) ? data.Efficiency.toFixed(2) : ((p / cap) * 100).toFixed(2);
   report.innerHTML=`<strong>📄 Active Power Report:</strong><br>
   Predicted Power: <strong>${p} W</strong><br>
   Irradiance: <strong>${i.toFixed(2)} W/m²</strong><br>
