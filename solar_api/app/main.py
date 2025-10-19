@@ -1,18 +1,18 @@
 # app/main.py
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from joblib import load
 import pandas as pd
 import numpy as np
+import os
 from app.preprocessing import preprocess_new_data
 
 # ======================================
 # 🚀 FastAPI Setup
 # ======================================
-app = FastAPI(title="☀️ Solar Power Predictor API", version="2.4")
+app = FastAPI(title="☀️ Solar Power Predictor API", version="2.5")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,6 +21,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ======================================
+# ⚙️ Config
+# ======================================
+SYSTEM_CAPACITY_W = int(os.getenv("SYSTEM_CAPACITY_W", 303709))
 
 # ======================================
 # 🔹 Load Model & Data
@@ -96,9 +101,13 @@ async def predict_manual(data: InputData):
         X_ready = preprocess_new_data(df)
         X_ready = prepare_for_model(X_ready)
         y_pred = np.clip(model.predict(X_ready), 0, None)
+        predicted_power = float(y_pred[0])
+        efficiency = max(0.0, min((predicted_power / SYSTEM_CAPACITY_W) * 100, 100))
 
         return {
-            "Predicted_Power": round(float(y_pred[0]), 2),
+            "Predicted_Power": round(predicted_power, 2),
+            "Efficiency": round(efficiency, 2),
+            "Capacity_W": SYSTEM_CAPACITY_W,
             "Status": "✅ Success",
             "Features": df.to_dict(orient="records")[0]
         }
@@ -150,9 +159,13 @@ async def predict_by_time(data: TimestampInput):
         X_ready = preprocess_new_data(df)
         X_ready = prepare_for_model(X_ready)
         y_pred = np.clip(model.predict(X_ready), 0, None)
+        predicted_power = float(y_pred[0])
+        efficiency = max(0.0, min((predicted_power / SYSTEM_CAPACITY_W) * 100, 100))
 
         return {
-            "Predicted_Power": round(float(y_pred[0]), 2),
+            "Predicted_Power": round(predicted_power, 2),
+            "Efficiency": round(efficiency, 2),
+            "Capacity_W": SYSTEM_CAPACITY_W,
             "Status": "✅ Success",
             "Features": df.to_dict(orient="records")[0]
         }
@@ -173,7 +186,10 @@ async def monthly_summary():
         X_ready = prepare_for_model(X_ready)
         df["Predicted_Power"] = np.clip(model.predict(X_ready), 0, None)
         summary = df.groupby("day")["Predicted_Power"].mean().reset_index()
-        return {"days": summary["day"].tolist(), "power": summary["Predicted_Power"].round(2).tolist()}
+        return {
+            "days": summary["day"].tolist(),
+            "power": summary["Predicted_Power"].round(2).tolist()
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -210,14 +226,15 @@ async def current_stats():
         predicted_power = float(np.clip(model.predict(X_ready)[0], 0, None))
         temperature = float(row["Ambient Temp. (degree centigrade)"])
         irradiance = float(row["Geff Reference (W/m2)"])
-        efficiency = round(predicted_power / 70000 * 100, 2)
+        efficiency = max(0.0, min((predicted_power / SYSTEM_CAPACITY_W) * 100, 100))
 
         return {
             "timestamp": str(now),
             "Predicted_Power": round(predicted_power, 2),
             "Temperature": round(temperature, 2),
             "Irradiance": round(irradiance, 2),
-            "Efficiency": efficiency,
+            "Efficiency": round(efficiency, 2),
+            "Capacity_W": SYSTEM_CAPACITY_W,
             "Status": "✅ Success"
         }
     except Exception as e:
