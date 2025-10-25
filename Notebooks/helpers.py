@@ -1,14 +1,3 @@
-"""
-helpers.py
------------
-Reusable helper functions for time-series regression and predictive modeling.
-
-Designed following clean-code principles for clarity, modularity, and reusability.
-This module can be reused across different regression or time-series projects.
-
-Author: (Your Name)
-"""
-
 # =========================================================
 # 📦 Imports
 # =========================================================
@@ -20,7 +9,12 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from math import sqrt
 from scipy.stats import spearmanr
-from sklearn.model_selection import GroupKFold, GridSearchCV
+from sklearn.model_selection import (
+    GroupKFold,
+    GridSearchCV,
+    TimeSeriesSplit,
+    train_test_split
+)
 from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
@@ -28,11 +22,10 @@ from sklearn.metrics import make_scorer, mean_squared_error, r2_score
 from sklearn.feature_selection import mutual_info_regression
 from xgboost import XGBRegressor
 
-
 sns.set_style("whitegrid")
 
 # =========================================================
-# 0️⃣ Column Name Standardization
+# 🧩 Column Standardization Utilities
 # =========================================================
 def canonicalize_column_name(name: str) -> str:
     """
@@ -68,15 +61,47 @@ def standardize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
-# 1️⃣ Data Loading & Integration
+# 🧹 Outlier Removal Utility
 # =========================================================
-def load_and_merge_training_data(file_list):
+def remove_outliers_iqr(df: pd.DataFrame, multiplier: float = 1.5) -> pd.DataFrame:
     """
-    Load multiple device files, standardize columns, align on timestamp, and
-    compute the per-timestamp average across devices for each numeric feature.
+    Remove outliers from numeric columns using the IQR method.
+    Works generically for any numeric dataset.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame.
+        multiplier (float): IQR multiplier (1.5 typical, 3 for lenient filtering).
 
     Returns:
-        pd.DataFrame with columns: ['timestamp', <averaged numeric features...>]
+        pd.DataFrame: Cleaned DataFrame.
+    """
+    df = df.copy()
+    num_cols = df.select_dtypes(include=[np.number]).columns
+    for col in num_cols:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower = Q1 - multiplier * IQR
+        upper = Q3 + multiplier * IQR
+        df = df[(df[col] >= lower) & (df[col] <= upper)]
+    return df
+
+
+# =========================================================
+# ⚙️ Data Loading & Integration
+# =========================================================
+def load_and_merge_training_data(file_list, resample_freq: str = None) -> pd.DataFrame:
+    """
+    Load multiple files, clean columns, remove outliers, align on timestamp,
+    and compute per-timestamp median across devices.
+
+    Args:
+        file_list (list): List of pickle file paths.
+        resample_freq (str): Optional pandas frequency string (e.g., '1min', '5min')
+                             to resample each file before merging.
+
+    Returns:
+        pd.DataFrame: Clean, aligned, and merged dataset.
     """
     dfs = []
     for f in file_list:
@@ -93,40 +118,33 @@ def load_and_merge_training_data(file_list):
             df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
             df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
 
-            # Standardize active power name if needed
-            if "active_power" not in df.columns and "Control-PPC - Active power (1m)" in df.columns:
-                df = df.rename(columns={"Control-PPC - Active power (1m)": "active_power"})
+            # Remove outliers
+            df = remove_outliers_iqr(df, multiplier=1.5)
 
-            # Deduplicate exact timestamps by averaging numeric columns
+            # Optionally resample to uniform time intervals
+            if resample_freq:
+                df = df.set_index("timestamp").resample(resample_freq).mean().reset_index()
+
+            # Deduplicate timestamps by taking median of numeric columns
             num_cols = df.select_dtypes(include="number").columns.tolist()
-            agg = {c: "mean" for c in num_cols}
+            agg = {c: "median" for c in num_cols}
             df = df.groupby("timestamp", as_index=False).agg(agg)
 
-            # Set timestamp as index for clean alignment later
             df = df.set_index("timestamp")
             dfs.append(df)
             print(f"✅ Loaded {f}: {df.shape}")
         except Exception as e:
-            print(f"❌ Failed to load {f}: {e}")
+            print(f"❌ Failed to load {f}: {type(e).__name__} - {e}")
 
     if len(dfs) == 0:
-        raise ValueError("No training files could be loaded.")
+        raise ValueError("No files could be successfully loaded.")
 
-    # Align on timestamp index (outer join to avoid losing points); then average over devices
+    # Align all data on timestamp (outer join), then compute median across devices
     wide = pd.concat(dfs, axis=1, keys=[f"S{i+1}" for i in range(len(dfs))])
-    # Average across the device level (level=0 is device key, level=1 is feature name)
-    averaged = wide.groupby(level=1, axis=1).mean()
+    merged = wide.groupby(level=1, axis=1).median().reset_index()
 
-    # Bring timestamp back as a column
-    averaged = averaged.reset_index()
-
-    # Ensure target name is active_power
-    if "active_power" not in averaged.columns and "Control-PPC - Active power (1m)" in averaged.columns:
-        averaged = averaged.rename(columns={"Control-PPC - Active power (1m)": "active_power"})
-
-    print(f"\n✅ Averaged {len(dfs)} files → Final shape: {averaged.shape}")
-    return averaged
-
+    print(f"\n✅ Merged {len(dfs)} files → Final shape: {merged.shape}")
+    return merged
 
 # =========================================================
 # 2️⃣ Data Cleaning
@@ -136,567 +154,524 @@ def clean_dataset(
     target_col: str = "active_power",
     time_col: str = "timestamp",
     phys_limits: dict = None,
-    clip_iqr: bool = True,
+    fix_negatives: bool = True,
     interpolate_time: bool = True,
-    mode: str = "train"   
+    day_hours: tuple = (6, 18),
+    mode: str = "train",
 ) -> pd.DataFrame:
     """
-    Generic time-series cleaning function for solar / sensor datasets.
-    Supports both training and testing modes.
-
-    Steps:
-    1. Fix negatives in target column.
-    2. Parse/sort time and add 'hour' column.
-    3. Handle suspicious daytime zeros.
-    4. Clip to physical limits if provided.
-    5. Apply IQR capping (optional).
-    6. Time-based interpolation (depends on mode).
-    7. Forward/backward fill for remaining gaps.
+    ✅ FIXED: Removed bfill() to prevent data leakage.
+    
+    Simplified cleaning for time-series data using only physical checks.
+    Tracks NaN fixes, physical clipping, and timestamp validity.
     """
 
     df = df.copy()
+    summary = {}
+
+    # 🧮 Count missing values before cleaning
+    nans_before = int(df.isna().sum().sum())
 
     # 1️⃣ Fix negatives in target column
     if target_col not in df.columns:
         raise ValueError(f"Expected '{target_col}' column.")
-    negatives_before = (df[target_col] < 0).sum()
-    df[target_col] = np.where(df[target_col] < 0, 0, df[target_col])
-    if negatives_before:
-        print(f"⚙️ Replaced {negatives_before:,} negative {target_col} values with 0.")
+    if fix_negatives:
+        negs = (df[target_col] < 0).sum()
+        if negs:
+            df[target_col] = np.where(df[target_col] < 0, 0, df[target_col])
+        summary["negatives_fixed"] = int(negs)
 
     # 2️⃣ Parse timestamp and add hour
     if time_col not in df.columns:
         raise ValueError(f"Expected '{time_col}' column.")
     df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
+    before_time = len(df)
     df = df.dropna(subset=[time_col]).sort_values(time_col).reset_index(drop=True)
+    summary["invalid_timestamps_removed"] = before_time - len(df)
     df["hour"] = df[time_col].dt.hour
-    daytime = df["hour"].between(6, 18)
+    daytime = df["hour"].between(day_hours[0], day_hours[1])
 
-    # 3️⃣ Detect suspicious zeros (daytime zeros with good irradiance)
-    poa_like = [c for c in df.columns if "Irradiance" in c or "GHI" in c or "POA" in c]
-    if poa_like:
-        poa_col = poa_like[0]
-        mask = (df[poa_col] > 100) & (df[target_col] <= 0) & daytime
-        count_bad = mask.sum()
-        if count_bad:
-            print(f"⚙️ Marked {count_bad:,} suspicious daytime zeros in '{target_col}' as NaN.")
-            df.loc[mask, target_col] = np.nan
+    # 3️⃣ Detect suspicious daytime zeros
+    poa_cols = [c for c in df.columns if any(k in c for k in ["Irradiance", "GHI", "POA"])]
+    if poa_cols:
+        poa_mean = df[poa_cols].mean(axis=1)
+        mask = (poa_mean > 100) & (df[target_col] <= 0) & daytime
+        summary["suspicious_daytime_zeros"] = int(mask.sum())
+        df.loc[mask, target_col] = np.nan
 
-    # 4️⃣ Apply physical limits if provided
-    if phys_limits:
-        for col, (low, high) in phys_limits.items():
-            if col in df.columns:
-                before = df[col].copy()
-                df[col] = df[col].clip(low, high)
-                clipped = (before != df[col]).sum()
-                if clipped:
-                    print(f"⚙️ Clipped {clipped:,} values in {col} outside [{low}, {high}]")
+    # 4️⃣ Apply physical limits
+    summary["phys_clipped"] = {}
+    for col, limits in (phys_limits or {}).items():
+        if col in df.columns and limits:
+            low, high = limits
+            before = df[col].copy()
+            df[col] = df[col].clip(low, high)
+            clipped = int((before != df[col]).sum())
+            if clipped:
+                summary["phys_clipped"][col] = clipped
 
-    # 5️⃣ IQR capping (light outlier suppression)
-    if clip_iqr:
-        num_cols = df.select_dtypes(include="number").columns.tolist()
-        for col in num_cols:
-            Q1, Q3 = df[col].quantile([0.25, 0.75])
-            IQR = Q3 - Q1
-            if pd.isna(IQR) or IQR == 0:
-                continue
-            lower, upper = Q1 - 1.5 * IQR, Q3 + 1.5 * IQR
-            df[col] = df[col].clip(lower, upper)
-
-    # 6️⃣ Interpolation (depends on mode)
+    # 5️⃣ Interpolation (✅ FIXED - No backward fill!)
     df = df.set_index(time_col)
-    num_cols = df.select_dtypes(include="number").columns.tolist()
-
-    if interpolate_time and num_cols:
+    num_cols = df.select_dtypes(include="number").columns
+    if interpolate_time and num_cols.size > 0:
         if mode == "train":
-            
-            df[num_cols] = df[num_cols].interpolate(method="time", limit_direction="both")
-            df[num_cols] = df[num_cols].ffill().bfill()
+            # ✅ CRITICAL FIX: Only forward interpolation + forward fill
+            df[num_cols] = df[num_cols].interpolate(method="time", limit_direction="forward")
+            df[num_cols] = df[num_cols].ffill()  # ONLY forward fill - NO bfill!
         else:
-            
-            df[num_cols] = df[num_cols].interpolate(method="time", limit=1, limit_direction="both")
+            # Test/production: conservative interpolation
+            df[num_cols] = df[num_cols].interpolate(method="time", limit=1, limit_direction="forward")
+            df[num_cols] = df[num_cols].ffill()  # ONLY forward fill
 
-    # 7️⃣ Fill for non-numeric columns
+    # 6️⃣ Fill for non-numeric columns
     non_num_cols = [c for c in df.columns if c not in num_cols]
     if non_num_cols:
-        df[non_num_cols] = df[non_num_cols].ffill().bfill()
+        df[non_num_cols] = df[non_num_cols].ffill()  # Only forward
 
     df = df.reset_index()
 
+    # 🧮 Count NaN after cleaning
+    nans_after = int(df.isna().sum().sum())
+    nans_added = summary.get("suspicious_daytime_zeros", 0)
+    nans_filled = nans_added + max(0, nans_before - nans_after)
+
+    summary["nans_before"] = nans_before
+    summary["remaining_nans"] = nans_after
+    summary["nans_fixed"] = nans_filled
+    summary["nans_introduced"] = max(0, nans_after - nans_before)
+
     # 🧾 Summary
-    print(f"✅ [{mode.upper()}] Cleaned successfully: {df.shape[0]:,} rows × {df.shape[1]:,} cols.")
+    print(f"\n✅ [{mode.upper()}] Cleaning Summary :")
+    for k, v in summary.items():
+        if isinstance(v, dict):
+            for subk, subv in v.items():
+                print(f"   • {k} → {subk}: {subv:,} values clipped")
+        else:
+            print(f"   • {k}: {v:,}")
+    print(f"✅ Final shape: {df.shape[0]:,} rows × {df.shape[1]:,} cols.\n")
+
     return df
 
-
 # =========================================================
-# 3️⃣ Smart EDA (Feature Redundancy Removal)
+# 🧹 Feature Dropping Utility
 # =========================================================
-def smart_feature_dedup(df, target="active_power", corr_thresh=0.99):
+def drop_high_target_corr_features(df, target="active_power", corr_thresh=0.95):
     """
-    Remove highly correlated redundant features while keeping the most relevant to target.
-    Returns the cleaned dataframe and a list of dropped columns.
+    Remove features that are TOO correlated with the target (|corr| > threshold).
+    Useful when some inputs are almost duplicates of the target (data leakage).
     """
     df_num = df.select_dtypes(include="number").copy()
-    features = [c for c in df_num.columns if c != target]
-    corr = df_num[features].corr().abs()
-    target_corr = df_num[features].corrwith(df_num[target]).abs()
+    if target not in df_num.columns:
+        raise ValueError(f"Target column '{target}' not found in DataFrame.")
 
-    to_drop = set()
-    dropped_pairs = []
+    corr_target = df_num.corrwith(df_num[target]).abs().sort_values(ascending=False)
+    high_corr_features = corr_target[corr_target > corr_thresh].index.tolist()
 
-    for i in range(len(features)):
-        for j in range(i + 1, len(features)):
-            c1, c2 = features[i], features[j]
-            if corr.loc[c1, c2] > corr_thresh:
-                drop_col = c1 if target_corr[c1] < target_corr[c2] else c2
-                to_drop.add(drop_col)
-                dropped_pairs.append((c1, c2, corr.loc[c1, c2], drop_col))
+    # Drop all except the target itself
+    high_corr_features = [f for f in high_corr_features if f != target]
 
-    print(f"🧠 Removed {len(to_drop)} redundant features (corr > {corr_thresh})")
-    if dropped_pairs:
-        print("\n🔍 Dropped pairs (top 10):")
-        for (a, b, corrv, dropc) in dropped_pairs[:10]:
-            print(f" - {a} ↔ {b} | corr={corrv:.4f} → dropped {dropc}")
+    print(f"⚠️ Found {len(high_corr_features)} features with |corr| > {corr_thresh} to target:")
+    for f in high_corr_features:
+        print(f" - {f}: corr={corr_target[f]:.4f}")
 
-    return df.drop(columns=list(to_drop), errors="ignore"), list(to_drop)
-
+    df_clean = df.drop(columns=high_corr_features, errors="ignore")
+    return df_clean, high_corr_features
 
 # =========================================================
-# 4️⃣ Feature Selection (PCC / MI / Spearman / Jaccard)
+# 📊 Feature Selection
 # =========================================================
 def select_features(df, target="active_power", top_k=10):
     """
-    Select top-K features using PCC and MI, compute Spearman rank correlation
-    and Jaccard similarity between their top-K sets.
+    Return top features by PCC & MI + agreement stats (Spearman, Jaccard).
     """
     features = [c for c in df.select_dtypes(include="number").columns if c != target]
+    if len(features) == 0:
+        raise ValueError("No numeric features found.")
 
-    # --- Compute PCC & MI ---
-    pcc_scores = df[features].corrwith(df[target], method="pearson")
+    pcc_scores = df[features].corrwith(df[target], method="pearson").abs()
     mi_scores = mutual_info_regression(df[features], df[target], random_state=42)
     mi_series = pd.Series(mi_scores, index=features)
 
-    # --- Spearman correlation between PCC and MI rankings ---
     ranks = pd.DataFrame({"PCC_rank": (-pcc_scores).rank(), "MI_rank": (-mi_series).rank()}).dropna()
     rho, _ = spearmanr(ranks["PCC_rank"], ranks["MI_rank"])
-    print(f"📊 Spearman correlation (PCC vs MI ranks): {rho:.3f}")
 
-    # --- Jaccard similarity ---
     top_pcc = pcc_scores.sort_values(ascending=False).head(top_k).index.tolist()
     top_mi = mi_series.sort_values(ascending=False).head(top_k).index.tolist()
-    jaccard = len(set(top_pcc) & set(top_mi)) / len(set(top_pcc) | set(top_mi))
-    print(f"🧩 Jaccard similarity (top-{top_k} sets): {jaccard:.3f}")
+    jaccard = len(set(top_pcc) & set(top_mi)) / len(set(top_pcc) | set(top_mi)) if (set(top_pcc) | set(top_mi)) else 0.0
 
-    # --- Visualization ---
-    plt.figure(figsize=(6, 6))
-    plt.scatter(ranks["PCC_rank"], ranks["MI_rank"], alpha=0.6, edgecolor="k")
-    plt.plot([0, len(features)], [0, len(features)], "r--")
-    plt.title(f"PCC vs MI Rank Comparison\nSpearman={rho:.3f}")
-    plt.xlabel("PCC Feature Rank")
-    plt.ylabel("MI Feature Rank")
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-
+    print(f"📊 Spearman correlation (PCC vs MI ranks): {rho:.3f}")
+    print(f"🧩 Jaccard similarity (top-{top_k}): {jaccard:.3f}")
     return top_pcc, top_mi, rho, jaccard
 
-
 # =========================================================
-# 5️⃣ Cross-validation Evaluation
+#  Saudi Arabia Season Definition
 # =========================================================
-def eval_cv(model, X, y, groups, label="Model"):
+def get_saudi_season(month):
     """
-    Perform GroupKFold CV and print fold metrics.
+    ✅ FIXED: Define seasons according to Saudi Arabia climate.
+    - Winter: November to February (cooler months)
+    - Spring: March to April (transition)
+    - Summer: May to September (extremely hot)
+    - Fall: October (short transition)
     """
-    gkf = GroupKFold(n_splits=4)
-    results = []
-
-    for i, (tr, te) in enumerate(gkf.split(X, y, groups)):
-        Xtr, Xte = X.iloc[tr], X.iloc[te]
-        ytr, yte = y.iloc[tr], y.iloc[te]
-
-        model.fit(Xtr, ytr)
-        pred_tr, pred_te = model.predict(Xtr), model.predict(Xte)
-        rmse_tr, rmse_te = sqrt(mean_squared_error(ytr, pred_tr)), sqrt(mean_squared_error(yte, pred_te))
-        r2_tr, r2_te = r2_score(ytr, pred_tr), r2_score(yte, pred_te)
-
-        print(f"[{label}] Fold {i}: Train RMSE={rmse_tr:,.2f}, Test RMSE={rmse_te:,.2f}, R²={r2_te:.3f}")
-        results.append({"Fold": i, "RMSE_Train": rmse_tr, "RMSE_Test": rmse_te, "R2_Train": r2_tr, "R2_Test": r2_te})
-
-    return pd.DataFrame(results)
-
+    if month in [12, 1, 2]:
+        return "winter"
+    elif month in [3, 4, 5]:
+        return "spring"
+    elif month in [6, 7, 8]:
+        return "summer"
+    else:  # 10
+        return "fall"
 
 # =========================================================
-# 6️⃣ GridSearch
+# ⚡ XGBRegressor Wrapper (no early stopping, stable for CV)
+# =========================================================
+class XGBStable(XGBRegressor):
+    """
+    Stable wrapper for XGBRegressor — avoids early stopping inside GridSearchCV.
+    This ensures consistent training across all folds (better for time-series CV).
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        
+    def fit(self, X, y, **fit_params):
+        # standard full training (no internal validation split)
+        return super().fit(X, y, **fit_params)
+
+# =========================================================
+# ⚙️ Grid Search (Time-series CV)
 # =========================================================
 def balanced_rmse(est, Xv, yv):
-    """Custom RMSE scorer that rewards feature diversity if available."""
+    """Negative RMSE (so higher is better for GridSearchCV)."""
     y_pred = est.predict(Xv)
     rmse = np.sqrt(mean_squared_error(yv, y_pred))
+    return -rmse
 
-    diversity = 1.0
-    if hasattr(est, "feature_importances_"):
-        fi = est.feature_importances_
-        if np.sum(fi) > 0:
-            fi = fi / np.sum(fi)
-            diversity = (fi > np.mean(fi) * 0.3).sum() / len(fi)
-            diversity = max(diversity, 0.3)
-
-    adjusted_rmse = rmse / (1 + 0.2 * diversity)
-    return -adjusted_rmse
-
-
-def run_gridsearch_cv(model, param_grid, X, y, groups=None, name="Model",
-                      cv_splits=4, scoring=balanced_rmse, verbose=1, n_jobs=-1):
-    """Generic GridSearchCV runner supporting grouped or normal CV."""
-    print(f"\n🚀 Running GridSearchCV for {name} ...")
-    cv = GroupKFold(n_splits=cv_splits) if groups is not None else cv_splits
+def run_timeSeries_gridsearch_cv(
+    model, param_grid, X, y,
+    name="Model", cv_splits=5,
+    scoring=balanced_rmse, verbose=1, n_jobs=-1
+):
+    """
+    GridSearchCV wrapper using TimeSeriesSplit (best for sequential data).
+    Compatible with XGBWithEarlyStopping (no need for a separate final fit).
+    """
+    print(f"\n🚀 Running GridSearchCV (TimeSeriesSplit={cv_splits}) for {name} ...")
+    cv = TimeSeriesSplit(n_splits=cv_splits)
 
     grid = GridSearchCV(
-        model,
-        param_grid,
+        estimator=model,
+        param_grid=param_grid,
         scoring=scoring,
         cv=cv,
         n_jobs=n_jobs,
-        verbose=verbose
+        verbose=verbose,
+        return_train_score=True,
+        refit=True  # train best_estimator_ on the full data at the end
     )
 
-    if groups is not None:
-        grid.fit(X, y, groups=groups)
-    else:
-        grid.fit(X, y)
-
+    grid.fit(X, y)
     print(f"✅ Best params for {name}: {grid.best_params_}")
-    print(f"🏆 Best CV RMSE (balanced): {-grid.best_score_:.2f}")
+    print(f"🏆 Best CV RMSE: {-grid.best_score_:.4f}")
     return grid
 
-
-def run_multiple_gridsearches(models_with_params, X, y, groups=None):
+def run_multiple_timeSeries_gridsearches(models_with_params, X, y, cv_splits=5):
     """
-    Run GridSearchCV for multiple models.
-    
-    Parameters
-    ----------
-    models_with_params : dict
-        Dictionary {model_name: (model_object, param_grid)}
-    X, y : DataFrame
-        Features and target.
-    groups : array-like, optional
-        Groups for GroupKFold (if applicable)
+    Run TS-aware GridSearch for multiple models.
     """
     results = {}
     for name, (model, params) in models_with_params.items():
-        results[name] = run_gridsearch_cv(model, params, X, y, groups, name)
+        results[name] = run_timeSeries_gridsearch_cv(
+            model, params, X, y, name=name, cv_splits=cv_splits
+        )
     return results
 
-
 # =========================================================
-# 7️⃣ Model Evaluation & Visualization
+# 📈 Evaluation (Temporal CV summary)
 # =========================================================
 def evaluate_best_model(grid, X, y, groups, name, group_labels=None):
     """
-    Evaluate the best model from GridSearchCV using GroupKFold.
-
-    Parameters
-    ----------
-    grid : fitted GridSearchCV
-        The grid search object with best_estimator_.
-    X, y : pandas.DataFrame, pandas.Series
-        Features and target data.
-    groups : array-like
-        Group labels for the CV splits (e.g., seasons, years).
-    name : str
-        Model name (for printing).
-    group_labels : list, optional
-        Custom labels for each group (e.g., ['Winter', 'Spring', ...]).
-        If None, will just print Fold 1, Fold 2, ...
+    Temporal evaluation summary with TimeSeriesSplit on the chosen best_estimator_.
+    ✅ Updated to include both Train and Test metrics per fold.
     """
     model_best = grid.best_estimator_
-    gkf = GroupKFold(n_splits=4)
+    tscv = TimeSeriesSplit(n_splits=4)
     rows = []
 
-    print(f"\n################ EVALUATION for {name} #################")
+    for i, (tr_idx, te_idx) in enumerate(tscv.split(X)):
+        X_tr, X_te = X.iloc[tr_idx], X.iloc[te_idx]
+        y_tr, y_te = y.iloc[tr_idx], y.iloc[te_idx]
 
-    for i, (train_idx, test_idx) in enumerate(gkf.split(X, y, groups)):
-        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+        model_best.fit(X_tr, y_tr)
 
-        model_best.fit(X_train, y_train)
-        y_pred_train = model_best.predict(X_train)
-        y_pred_test = model_best.predict(X_test)
+        y_pred_tr = model_best.predict(X_tr)
+        y_pred_te = model_best.predict(X_te)
 
-        rmse_train = np.sqrt(mean_squared_error(y_train, y_pred_train))
-        rmse_test = np.sqrt(mean_squared_error(y_test, y_pred_test))
-        r2_train = r2_score(y_train, y_pred_train)
-        r2_test = r2_score(y_test, y_pred_test)
-
-        season_name = group_labels[i] if group_labels else f"Fold {i+1}"
-        print(f"[{name}] {season_name}: Train RMSE={rmse_train:,.2f}, "
-              f"Test RMSE={rmse_test:,.2f} | Train R²={r2_train:.4f}, Test R²={r2_test:.4f}")
+        rmse_tr = np.sqrt(mean_squared_error(y_tr, y_pred_tr))
+        r2_tr = r2_score(y_tr, y_pred_tr)
+        rmse_te = np.sqrt(mean_squared_error(y_te, y_pred_te))
+        r2_te = r2_score(y_te, y_pred_te)
 
         rows.append({
-            "Fold": i+1,
-            "Group": season_name,
-            "RMSE_Train": rmse_train,
-            "RMSE_Test": rmse_test,
-            "R2_Train": r2_train,
-            "R2_Test": r2_test
+            "Fold": group_labels[i] if group_labels and i < len(group_labels) else f"Fold-{i+1}",
+            "Train_RMSE": rmse_tr,
+            "Train_R2": r2_tr,
+            "Test_RMSE": rmse_te,
+            "Test_R2": r2_te
         })
 
     df_eval = pd.DataFrame(rows)
-    print(f"\n[{name}] AVG → Train RMSE={df_eval['RMSE_Train'].mean():,.2f} | "
-          f"Test RMSE={df_eval['RMSE_Test'].mean():,.2f} | "
-          f"Train R²={df_eval['R2_Train'].mean():.4f} | "
-          f"Test R²={df_eval['R2_Test'].mean():.4f}")
+    print(f"\n📊 {name} – Fold Results:")
+    print(df_eval)
+    print(f"\n{name} → Avg Train RMSE={df_eval['Train_RMSE'].mean():.4f}, "
+          f"Avg Test RMSE={df_eval['Test_RMSE'].mean():.4f}, "
+          f"Δ={df_eval['Test_RMSE'].mean() - df_eval['Train_RMSE'].mean():.4f}")
 
     return df_eval
 
 
 def compare_models_results(evals):
-    """Compare model metrics visually."""
+    """
+    Compact comparison table across models (average Train/Test metrics)
+    + bar plot comparing RMSE between models.
+    """
     summary = pd.DataFrame({
         "Model": list(evals.keys()),
-        "Train_RMSE": [e["RMSE_Train"].mean() for e in evals.values()],
-        "Test_RMSE": [e["RMSE_Test"].mean() for e in evals.values()],
-        "Train_R2": [e["R2_Train"].mean() for e in evals.values()],
-        "Test_R2": [e["R2_Test"].mean() for e in evals.values()]
-    })
+        "Train_RMSE": [e["Train_RMSE"].mean() for e in evals.values()],
+        "Test_RMSE": [e["Test_RMSE"].mean() for e in evals.values()],
+        "Train_R2": [e["Train_R2"].mean() for e in evals.values()],
+        "Test_R2": [e["Test_R2"].mean() for e in evals.values()],
+    }).sort_values("Test_RMSE")
 
-    print("\n================= FINAL GRIDSEARCH SUMMARY =================")
+    summary["RMSE_Gap"] = summary["Test_RMSE"] - summary["Train_RMSE"]
+
+    print("\n================= GRIDSEARCH SUMMARY =================")
     print(summary.to_string(index=False))
 
-    plt.figure(figsize=(8, 5))
-    sns.barplot(data=summary.melt(id_vars="Model", value_vars=["Train_RMSE", "Test_RMSE"]),
-                x="Model", y="value", hue="variable", palette="crest")
-    plt.title("RMSE Comparison after Hyperparameter Tuning")
+    # =========================================================
+    # 📊 Visualization: Compare all models (Train vs Test RMSE)
+    # =========================================================
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    plt.figure(figsize=(8,6))
+    plot_df = summary.melt(
+        id_vars="Model",
+        value_vars=["Train_RMSE", "Test_RMSE"],
+        var_name="Dataset",
+        value_name="RMSE"
+    )
+
+    sns.barplot(
+        data=plot_df,
+        x="Model",
+        y="RMSE",
+        hue="Dataset",
+        palette=["#4CAF50", "#E74C3C"]
+    )
+
+    plt.title("📉 RMSE Comparison Across Models (Train vs Test)")
+    plt.xlabel("Model")
+    plt.ylabel("RMSE")
+    plt.legend(title="Dataset", loc="upper right")
     plt.tight_layout()
     plt.show()
 
     return summary
 
+# =========================================================
+# 🌤️ Leave-One-Season-Out (Analytical only)
+# =========================================================
+def evaluate_leave_one_season_out_FIXED(grid, X, y, season_series, name):
+    """
+    Train on 3 seasons, test on the held-out season — purely for analytical insight.
+    """
+    model_best = grid.best_estimator_
+    df = pd.DataFrame({
+        "season": season_series.values,
+        "y_true": y.values if hasattr(y, "values") else y,
+    })
+    df_X = X.copy()
+    rows = []
+    unique_seasons = df["season"].unique()
+
+    print(f"\n######## LEAVE-ONE-SEASON-OUT (Test-Focused) for {name} ########")
+    for test_season in unique_seasons:
+        tr_idx = df[df["season"] != test_season].index
+        te_idx = df[df["season"] == test_season].index
+
+        X_tr, X_te = df_X.iloc[tr_idx], df_X.iloc[te_idx]
+        y_tr, y_te = y.iloc[tr_idx], y.iloc[te_idx]
+
+        model_best.fit(X_tr, y_tr)
+        y_pred_te = model_best.predict(X_te)
+
+        rmse_te = np.sqrt(mean_squared_error(y_te, y_pred_te))
+        r2_te = r2_score(y_te, y_pred_te)
+        mae_te = np.mean(np.abs(y_te - y_pred_te))
+        mean_power_te = y_te.mean()
+        rmse_te_pct = 100 * rmse_te / mean_power_te if mean_power_te != 0 else np.nan
+
+        rows.append({
+            "Season": str(test_season).upper(),
+            "Test_RMSE": rmse_te,
+            "Test_RMSE_%": rmse_te_pct,
+            "Test_R2": r2_te,
+            "Test_MAE": mae_te,
+        })
+
+    df_summary = pd.DataFrame(rows).sort_values("Test_RMSE_%", ascending=False)
+    print(df_summary)
+    return df_summary
 
 # =========================================================
-# 8️⃣ Final Model Training & Feature Importance
+#  📊 Feature Importance Plotter
 # =========================================================
-def train_xgb_model(X, y, params=None, verbose=True):
+def plot_feature_importance(model, X, title="Feature Importance", top_n=15):
     """
-    General XGBoost training function.
-
-    Args:
-        X (pd.DataFrame): Features.
-        y (pd.Series or np.array): Target.
-        params (dict, optional): Custom hyperparameters.
-        verbose (bool): Whether to print confirmation message.
-
-    Returns:
-        XGBRegressor: Trained XGBoost model.
+    Generic feature importance plotter for both tree-based and linear models.
     """
-    default_params = {
-        'colsample_bylevel': 0.7, 
-        'colsample_bytree': 0.6, 
-        'learning_rate': 0.02,
-        'max_depth': 5, 
-        'min_child_weight': 5, 
-        'n_estimators': 800, 
-        'subsample': 0.8,
-        'reg_lambda': 2.0, 
-        'random_state': 42, 
-        'n_jobs': -1
-    }
+    plt.figure(figsize=(8, 6))
 
-    if params:
-        default_params.update(params)
+    # Case 1: Tree-based models (e.g., XGBoost)
+    if hasattr(model, "feature_importances_"):
+        importances = model.feature_importances_
+        feature_names = getattr(X, "columns", [f"f{i}" for i in range(len(importances))])
+        imp_df = pd.DataFrame({"Feature": feature_names, "Importance": importances}) \
+                   .sort_values("Importance", ascending=False).head(top_n)
+        sns.barplot(data=imp_df, x="Importance", y="Feature", palette="crest")
+        plt.title(title)
+        plt.tight_layout()
 
-    model = XGBRegressor(**default_params)
-    model.fit(X, y)
+    # Case 2: Linear models (e.g., Ridge)
+    elif hasattr(model, "coef_"):
+        coef = np.abs(np.ravel(model.coef_))
+        feature_names = getattr(X, "columns", [f"f{i}" for i in range(len(coef))])
+        imp_df = pd.DataFrame({"Feature": feature_names, "Importance": coef}) \
+                   .sort_values("Importance", ascending=False).head(top_n)
+        sns.barplot(data=imp_df, x="Importance", y="Feature", palette="crest")
+        plt.title(title + " (Linear Coefficients)")
+        plt.tight_layout()
 
-    if verbose:
-        print("✅ XGBoost model trained successfully!")
-    return model
+    else:
+        print("⚠️ No feature importance or coefficients found for this model.")
+        return
 
-
-
-def plot_feature_importance(model, X, title="XGBoost Feature Importance"):
-    """Plot top 15 features for trained XGBoost model."""
-    imp = pd.DataFrame({
-        "Feature": X.columns,
-        "Importance": model.feature_importances_
-    }).sort_values("Importance", ascending=False).head(15)
-
-    plt.figure(figsize=(7, 6))
-    sns.barplot(data=imp, x="Importance", y="Feature", palette="viridis")
-    plt.title(title)
-    plt.tight_layout()
     plt.show()
 
-def plot_predictions_vs_actual(model, X, y, title="Predicted vs Actual (XGBoost)", sample_size=500):
+# =========================================================
+# 📈 Visualization – Predictions vs Actual & Residuals
+# =========================================================
+def plot_predictions_vs_actual(model, X, y, title="Predictions vs Actual", sample_size=None):
     """
-    Visualize model performance using both scatter plot (all data)
-    and line plot (sampled data for detailed comparison).
+    Visualize predictions vs actual values and residuals.
 
     Args:
-        model: Trained model (e.g., XGBRegressor)
+        model: Trained regression model
         X (pd.DataFrame): Input features
-        y (pd.Series or np.array): True target values
+        y (pd.Series): True target values
         title (str): Plot title
-        sample_size (int): Number of samples for line plot
+        sample_size (int): Optional number of samples to plot
+
+    Returns:
+        dict: Performance metrics (RMSE, MAE, R²)
+        pd.DataFrame: Table with Actual and Predicted values
     """
+    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+
     # ✅ Generate predictions
     y_pred = model.predict(X)
 
+    # ✅ Optionally sample for clarity
+    if sample_size and len(y) > sample_size:
+        idx = np.random.choice(len(y), sample_size, replace=False)
+        y_true_sample = np.array(y)[idx]
+        y_pred_sample = np.array(y_pred)[idx]
+    else:
+        y_true_sample = np.array(y)
+        y_pred_sample = np.array(y_pred)
+
     # ✅ Compute metrics
     rmse = np.sqrt(mean_squared_error(y, y_pred))
+    mae = mean_absolute_error(y, y_pred)
     r2 = r2_score(y, y_pred)
-    mae = np.mean(np.abs(y - y_pred))
 
-    # ==========================
-    # 🔹 1. Scatter plot (ALL DATA)
-    # ==========================
-    plt.figure(figsize=(7, 7))
-    plt.scatter(y, y_pred, alpha=0.4, edgecolor="k", s=20)
-    plt.plot([y.min(), y.max()], [y.min(), y.max()], "r--", lw=2, label="Ideal line")
-    plt.xlabel("Actual Values", fontsize=12)
-    plt.ylabel("Predicted Values", fontsize=12)
-    plt.title(f"{title}\nRMSE={rmse:,.2f} | MAE={mae:,.2f} | R²={r2:.3f}", fontsize=13)
-    plt.grid(True, linestyle="--", alpha=0.5)
-    plt.legend()
+    # ✅ Scatter & Residual plots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # --- Left: Predicted vs Actual ---
+    ax1.scatter(y_true_sample, y_pred_sample, alpha=0.5, edgecolor='k', s=30)
+    ax1.plot(
+        [y_true_sample.min(), y_true_sample.max()],
+        [y_true_sample.min(), y_true_sample.max()],
+        'r--', lw=2, label='Perfect prediction'
+    )
+    ax1.set_xlabel('Actual Values', fontsize=12)
+    ax1.set_ylabel('Predicted Values', fontsize=12)
+    ax1.set_title(f'{title}\nRMSE={rmse:.2f} | R²={r2:.3f}', fontsize=13)
+    ax1.legend()
+    ax1.grid(alpha=0.3)
+
+    # --- Right: Residuals ---
+    residuals = y_true_sample - y_pred_sample
+    ax2.scatter(y_pred_sample, residuals, alpha=0.5, edgecolor='k', s=30)
+    ax2.axhline(y=0, color='r', linestyle='--', lw=2)
+    ax2.set_xlabel('Predicted Values', fontsize=12)
+    ax2.set_ylabel('Residuals', fontsize=12)
+    ax2.set_title(f'Residual Plot\nMAE={mae:.2f}', fontsize=13)
+    ax2.grid(alpha=0.3)
+
     plt.tight_layout()
     plt.show()
 
-    # ==========================
-    # 🔹 2. Line plot (SAMPLED DATA)
-    # ==========================
-    if len(y) > sample_size:
-        idx = np.linspace(0, len(y) - 1, sample_size, dtype=int)
-        y_plot = y.iloc[idx] if hasattr(y, "iloc") else y[idx]
-        y_pred_plot = y_pred[idx]
-        x_axis = X.index[idx] if hasattr(X, "index") else np.arange(len(y_plot))
-    else:
-        y_plot, y_pred_plot = y, y_pred
-        x_axis = X.index if hasattr(X, "index") else np.arange(len(y))
+    # ✅ Print metrics summary
+    print(f"\n📊 {title} Metrics:")
+    print(f"   RMSE: {rmse:.4f}")
+    print(f"   MAE : {mae:.4f}")
+    print(f"   R²  : {r2:.4f}")
 
-    # If there’s a timestamp column, use it as X-axis
-    if "timestamp" in X.columns:
-        x_axis = pd.to_datetime(X["timestamp"].iloc[idx] if len(y) > sample_size else X["timestamp"])
-
-    # Compute absolute error for visualization
-    abs_error = np.abs(y_plot - y_pred_plot)
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(x_axis, y_plot, label="Actual", linewidth=2)
-    plt.plot(x_axis, y_pred_plot, label="Predicted", linewidth=2, alpha=0.8)
-    plt.fill_between(range(len(y_plot)), y_plot, y_pred_plot, color="gray", alpha=0.15, label="Error gap")
-    plt.title(f"Sampled Prediction vs Actual\nMean Abs Error={abs_error.mean():.2f}", fontsize=13)
-    plt.xlabel("Time" if "timestamp" in X.columns else "Sample Index")
-    plt.ylabel("Target Value")
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-
-    # ==========================
-    # 🔹 3. Print numeric comparison (first 10)
-    # ==========================
-    preview = pd.DataFrame({
-        "Actual": np.round(y_plot[:10].values, 3),
-        "Predicted": np.round(y_pred_plot[:10], 3),
-        "Difference": np.round(y_pred_plot[:10] - y_plot[:10].values, 3)
+    # ✅ Create and return DataFrame
+    results_df = pd.DataFrame({
+        "Actual": np.array(y),
+        "Predicted": np.array(y_pred),
+        "Residual": np.array(y) - np.array(y_pred)
     })
-    print("🔍 Sample numeric comparison (first 10 rows):")
-    print(preview)
 
-    # 🔹 Optionally return performance metrics
-    return {"RMSE": rmse, "R2": r2}
+    return {"RMSE": rmse, "MAE": mae, "R2": r2}, results_df
 
+def evaluate_rmse_against_capacity(model, X, y, capacity_kw):
+    """
+    Evaluate model RMSE as % of system capacity.
+    Useful for understanding error relative to system size.
+    """
+    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+    y_pred = model.predict(X)
+    rmse = np.sqrt(mean_squared_error(y, y_pred))
+    mae = mean_absolute_error(y, y_pred)
+    r2 = r2_score(y, y_pred)
+
+    rmse_pct = 100 * rmse / capacity_kw
+    mae_pct = 100 * mae / capacity_kw
+
+    print(f"\n⚡ RMSE vs Capacity Analysis:")
+    print(f"   RMSE = {rmse:.2f} W  ({rmse_pct:.2f}% of capacity)")
+    print(f"   MAE  = {mae:.2f} W  ({mae_pct:.2f}% of capacity)")
+    print(f"   R²   = {r2:.4f}")
+
+    return {
+        "RMSE_W": rmse,
+        "MAE_W": mae,
+        "R2": r2,
+        "RMSE_%": rmse_pct,
+        "MAE_%": mae_pct
+    }
 
 # =========================================================
-# 9️⃣ Model Persistence
+# 💾 Save / Load
 # =========================================================
 def save_model(model, filename):
-    """Save model to disk."""
     joblib.dump(model, filename)
     print(f"💾 Model saved → {filename}")
 
-
 def load_model(filename):
-    """Load model from disk."""
     return joblib.load(filename)
-
-# =========================================================
-# 🔟 RMSE vs System Capacity Evaluation
-# =========================================================
-def evaluate_rmse_against_capacity(df, rmse_values, target_col="active_power", irradiance_col=None):
-    """
-    Evaluate RMSE values as a percentage of estimated system capacity.
-
-    Steps:
-      1. Estimate capacity from top quantiles of the target during sunny hours.
-      2. Compute RMSE % of capacity overall and per season if provided.
-    
-    Args:
-        df (pd.DataFrame): Dataset containing timestamp + active_power + irradiance.
-        rmse_values (float or dict): RMSE (overall or per-season dict).
-        target_col (str): Column name for target variable.
-        irradiance_col (str): Column name for irradiance; if None, auto-detected.
-    
-    Returns:
-        dict: Contains capacity estimation and RMSE % results.
-    """
-    df = df.copy()
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df.dropna(subset=["timestamp"])
-    df["hour"] = df["timestamp"].dt.hour
-
-    # Auto-detect irradiance column if not provided
-    if irradiance_col is None:
-        for c in df.columns:
-            if "Irradiance" in c and "(W/m2)" in c:
-                irradiance_col = c
-                break
-
-    if irradiance_col is None or irradiance_col not in df.columns:
-        raise ValueError("Could not find a valid irradiance column in dataset.")
-
-    # Filter to sunny daytime
-    mask = df["hour"].between(8, 16) & (df[irradiance_col] > 200) & df[target_col].notna()
-    subset = df.loc[mask, target_col]
-
-    # Capacity estimation
-    cap_p99 = subset.quantile(0.99)
-    cap_p995 = subset.quantile(0.995)
-    cap_top100 = subset.nlargest(100).median()
-    cap_est = cap_p995
-
-    print("🔎 Capacity estimation (Watts):")
-    print(f" - P99.0  : {cap_p99:,.0f}")
-    print(f" - P99.5  : {cap_p995:,.0f}")
-    print(f" - Median of top-100: {cap_top100:,.0f}")
-    print(f"\n✅ Chosen capacity estimate: {cap_est:,.0f} W")
-
-    # Helper
-    def pct(val): return 100 * val / cap_est if cap_est > 0 else np.nan
-
-    # Compute RMSE % of capacity
-    print("\n📏 RMSE as % of capacity:")
-    if isinstance(rmse_values, dict):
-        for s, v in rmse_values.items():
-            print(f" - {s.capitalize():7s}: {pct(v):.2f}%")
-        overall = np.mean(list(rmse_values.values()))
-        print(f" - Overall: {pct(overall):.2f}%")
-    else:
-        print(f" - Overall RMSE ({rmse_values:,.2f}) → {pct(rmse_values):.2f}%")
-
-    return {
-        "capacity_est": cap_est,
-        "rmse_percent": pct(rmse_values if isinstance(rmse_values, (int, float)) else np.mean(list(rmse_values.values())))
-    }
-
-
-# =========================================================
-# 1️⃣1️⃣ Preprocess New Data for Deployment
-# =========================================================
-def preprocess_new_data(df_raw):
-    """Apply same cleaning pipeline to unseen data."""
-    df_clean = clean_dataset(df_raw)
-    df_clean = smart_feature_dedup(df_clean)
-    return df_clean
