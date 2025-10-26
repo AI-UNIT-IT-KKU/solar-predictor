@@ -6,7 +6,7 @@ def preprocess_new_data(df_raw: pd.DataFrame):
     df = df_raw.copy()
 
     num_cols = df.select_dtypes(include="number").columns
-    df[num_cols] = df[num_cols].fillna(method="ffill").fillna(method="bfill")
+    df[num_cols] = df[num_cols].ffill().bfill()
 
     for col in num_cols:
         if (df[col] < 0).any():

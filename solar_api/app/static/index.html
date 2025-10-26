@@ -11,81 +11,266 @@
   <style>
     :root{
       --bg:#0d1117;--card:#161b22;--border:#30363d;
-      --blue:#3b82f6;--cyan:#06b6d4;--text:#e5e7eb;--muted:#9ca3af;
+      --blue:#3b82f6;--text:#e5e7eb;--muted:#9ca3af;
     }
-    body{margin:0;font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);}
-    header{display:flex;justify-content:space-between;align-items:center;
-      padding:16px 24px;border-bottom:1px solid var(--border);
-      background:linear-gradient(90deg,#0f172a,#1e293b);}
-    header h1{display:flex;gap:8px;align-items:center;color:var(--blue);}
-    .app-container{max-width:1300px;margin:auto;padding:1rem 1.5rem;}
-    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;margin-top:1rem;}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1rem;text-align:center;}
-    .card h3{color:var(--muted);margin:0 0 6px}
-    .v{font-size:28px;font-weight:800;color:var(--blue);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-    .input-sections{display:flex;gap:1rem;margin-top:1.5rem;flex-wrap:wrap;}
-    .input-section{flex:1;min-width:300px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1rem;display:flex;flex-direction:column;}
-    .input-section h2{color:var(--blue);}
-    input{padding:.5rem;margin:.3rem 0;border:1px solid var(--border);border-radius:8px;background:#0f172a;color:var(--text);}
-    .btn{background:var(--blue);color:#fff;border:none;border-radius:8px;padding:.6rem;font-weight:700;cursor:pointer;}
-    .manual-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;}
-    @media(max-width:900px){.manual-grid{grid-template-columns:repeat(2,1fr)}}
-    .charts{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-top:2rem;}
-    @media(max-width:1000px){.charts{grid-template-columns:1fr}}
-    .chart{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1rem;}
-    .report-box{margin-top:1rem;background:rgba(59,130,246,0.1);border:1px solid var(--border);border-radius:10px;padding:0.75rem;}
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{
+      font-family:'Inter',sans-serif;
+      background:var(--bg);
+      color:var(--text);
+      height:100vh;
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+    }
+    
+    header{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:8px 16px;
+      border-bottom:1px solid var(--border);
+      background:linear-gradient(90deg,#0f172a,#1e293b);
+      font-size:0.9rem;
+      flex-shrink:0;
+    }
+    header h1{
+      display:flex;
+      gap:6px;
+      align-items:center;
+      font-size:1.1rem;
+      color:var(--blue);
+    }
+    
+    .app-container{
+      flex:1;
+      max-width:1400px;
+      margin:0 auto;
+      width:100%;
+      padding:12px;
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      grid-template-rows:auto 1fr;
+      gap:12px;
+      overflow:hidden;
+    }
+
+    .cards{
+      grid-column:1 / -1;
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:12px;
+    }
+    .card{
+      background:linear-gradient(135deg,#1e293b,#334155);
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:12px;
+      text-align:center;
+    }
+    .card h3{
+      color:var(--muted);
+      font-size:0.75rem;
+      margin-bottom:6px;
+    }
+    .v{
+      font-size:1.4rem;
+      font-weight:700;
+      color:var(--blue);
+      margin-bottom:2px;
+    }
+    .card small{
+      font-size:0.7rem;
+      color:var(--muted);
+    }
+
+    .input-sections{
+      grid-column:1 / 3;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      overflow:hidden;
+    }
+    .input-section{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:12px;
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      min-height:0;
+    }
+    .input-section:first-child{
+      flex:1;
+    }
+    .input-section:last-child{
+      flex:2;
+    }
+    .input-section h2{
+      color:var(--blue);
+      font-size:0.95rem;
+      margin-bottom:4px;
+    }
+    
+    input{
+      padding:8px;
+      border:1px solid var(--border);
+      border-radius:6px;
+      background:#0f172a;
+      color:var(--text);
+      font-size:0.8rem;
+    }
+    
+    .btn{
+      background:var(--blue);
+      color:#fff;
+      border:none;
+      border-radius:6px;
+      padding:10px;
+      font-weight:600;
+      cursor:pointer;
+      font-size:0.85rem;
+      transition:background 0.2s;
+    }
+    .btn:hover{background:#2563eb;}
+    
+    .manual-grid{
+      display:grid;
+      grid-template-columns:repeat(3,1fr);
+      gap:6px;
+      max-height:150px;
+      overflow-y:auto;
+    }
+    .manual-grid::-webkit-scrollbar{width:6px;}
+    .manual-grid::-webkit-scrollbar-track{background:#0f172a;}
+    .manual-grid::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+    
+    .report-box{
+      background:rgba(59,130,246,0.08);
+      border:1px solid var(--border);
+      border-radius:8px;
+      padding:10px;
+      font-size:0.8rem;
+      line-height:1.4;
+      flex:1;
+      overflow-y:auto;
+    }
+
+    .charts{
+      grid-column:3 / -1;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      overflow:hidden;
+    }
+    .chart{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:12px;
+      flex:1;
+      display:flex;
+      flex-direction:column;
+      min-height:0;
+    }
+    .chart h3{
+      font-size:0.9rem;
+      margin-bottom:8px;
+      color:var(--blue);
+    }
+    .chart-wrapper{
+      flex:1;
+      position:relative;
+      min-height:0;
+    }
+    canvas{
+      width:100%!important;
+      height:100%!important;
+    }
+
+    @media(max-width:1200px){
+      .app-container{
+        grid-template-columns:1fr 1fr;
+        grid-template-rows:auto auto auto;
+      }
+      .cards{grid-column:1 / -1;}
+      .input-sections{grid-column:1 / -1;}
+      .charts{grid-column:1 / -1;}
+    }
   </style>
 </head>
 <body>
   <header>
-    <h1><span class="material-icons">wb_sunny</span> Solar Power Dashboard</h1>
+    <h1><span class="material-icons">wb_sunny</span> Solar Dashboard</h1>
     <div id="currentDateTime"></div>
   </header>
 
   <div class="app-container">
-    <!-- Top summary cards -->
     <div class="cards">
-      <div class="card"><h3>Current Power</h3><div class="v" id="currentPower">--</div><small>W</small></div>
-      <div class="card"><h3>Irradiance</h3><div class="v" id="currentIrradiance">--</div><small>W/m²</small></div>
-      <div class="card"><h3>Temperature</h3><div class="v" id="currentTemp">--</div><small>°C</small></div>
-      <div class="card"><h3>Efficiency</h3><div class="v" id="currentEfficiency">--</div><small>%</small></div>
+      <div class="card">
+        <h3>Power</h3>
+        <div class="v" id="currentPower">--</div>
+        <small>W</small>
+      </div>
+      <div class="card">
+        <h3>Irradiance</h3>
+        <div class="v" id="currentIrradiance">--</div>
+        <small>W/m²</small>
+      </div>
+      <div class="card">
+        <h3>Temp</h3>
+        <div class="v" id="currentTemp">--</div>
+        <small>°C</small>
+      </div>
+      <div class="card">
+        <h3>Efficiency</h3>
+        <div class="v" id="currentEfficiency">--</div>
+        <small>%</small>
+      </div>
     </div>
 
-    <!-- Prediction sections -->
     <div class="input-sections">
       <div class="input-section">
-        <h2>🔹 Predict by Timestamp</h2>
-        <label>Select Date & Time:</label>
+        <h2>🔹 Manual Input</h2>
+        <div class="manual-grid">
+          <input placeholder="Geff Reference (W/m2)" id="Geff_Reference_Wm2" type="number"/>
+          <input placeholder="Geff Test (W/m2)" id="Geff_Test_Wm2" type="number"/>
+          <input placeholder="Hour" id="hour" type="number" min="0" max="23"/>
+          <input placeholder="Module Surface Temp2 (°C)" id="Module_Surface_Temperature2_degC" type="number"/>
+          <input placeholder="Module Surface Temp1 (°C)" id="Module_Surface_Temperature1_degC" type="number"/>
+          <input placeholder="Temp Ref Cell (°C)" id="Temperature_Reference_Cell_degC" type="number"/>
+          <input placeholder="Temp Test (°C)" id="Temperature_Test_degC" type="number"/>
+          <input placeholder="Soiling Isc (%)" id="Soiling_Loss_Index_Isc_percent" type="number"/>
+          <input placeholder="Soiling Geff (%)" id="Soiling_Loss_Index_Geff_percent" type="number"/>
+          <input placeholder="Ambient Temp (°C)" id="Ambient_Temp_degC" type="number"/>
+        </div>
+        <button class="btn" onclick="predictManual()">Predict</button>
+      </div>
+
+      <div class="input-section">
+        <h2>🔹 Predict by Time</h2>
         <input type="datetime-local" id="timestampInput"/>
         <button class="btn" onclick="predictByTimestamp()">Predict</button>
         <div class="report-box" id="predictionReport">
           <strong>📄 Active Power Report:</strong><br>No data yet.
         </div>
       </div>
-
-      <div class="input-section">
-        <h2>Manual Input</h2>
-        <div class="manual-grid">
-          <input placeholder="Geff (W/m²)" id="Geff_Reference_Wm2" type="number"/>
-          <input placeholder="Temp (°C)" id="Ambient_Temp_degC" type="number"/>
-          <input placeholder="Humidity (%)" id="Relative_Humidity" type="number"/>
-          <input placeholder="Wind (m/s)" id="Wind_Speed_ms" type="number"/>
-          <input placeholder="Temp Test (°C)" id="Temperature_Test_degC" type="number"/>
-          <input placeholder="Soiling Geff (%)" id="Soiling_Geff" type="number"/>
-          <input placeholder="Soiling Isc (%)" id="Soiling_Isc" type="number"/>
-          <input placeholder="GHI (W/m²)" id="GHI_Wm2" type="number"/>
-          <input placeholder="POA1 (W/m²)" id="POA1_Wm2" type="number"/>
-          <input placeholder="Hour" id="hour" type="number" min="0" max="23"/>
-          <input placeholder="Month" id="month" type="number" min="1" max="12"/>
-        </div>
-        <button class="btn" onclick="predictManual()">Predict</button>
-      </div>
     </div>
 
-    <!-- Charts section -->
     <div class="charts">
-      <div class="chart"><h3>⚡ Power Trend (24h)</h3><canvas id="dailyChart"></canvas></div>
-      <div class="chart"><h3>🌤️ Energy Production (30d)</h3><canvas id="monthlyChart"></canvas></div>
+      <div class="chart">
+        <h3>⚡ 24h Power Trend</h3>
+        <div class="chart-wrapper">
+          <canvas id="dailyChart"></canvas>
+        </div>
+      </div>
+      <div class="chart">
+        <h3>🌤️ 30d Energy Production</h3>
+        <div class="chart-wrapper">
+          <canvas id="monthlyChart"></canvas>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -93,121 +278,120 @@
 const API_BASE = '';
 let dailyChart, monthlyChart;
 
-// Update the header datetime in real time
 function updateDateTime(){
   const now = new Date();
   document.getElementById('currentDateTime').textContent = now.toLocaleString('en-US',{
-    weekday:'long',year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'
+    weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'
   });
 }
-updateDateTime(); 
-setInterval(updateDateTime,1000);
+updateDateTime(); setInterval(updateDateTime,1000);
 
-// ✅ Automatically load top cards data from backend
 async function loadCurrentStats(){
   try{
     const res = await fetch(`${API_BASE}/data/current_stats/`);
     const data = await res.json();
     if(data.Status === '✅ Success'){
-      document.getElementById('currentPower').textContent = data.Predicted_Power.toFixed(2);
-      document.getElementById('currentIrradiance').textContent = data.Irradiance.toFixed(2);
+      document.getElementById('currentPower').textContent = data.Predicted_Power.toFixed(1);
+      document.getElementById('currentIrradiance').textContent = data.Irradiance.toFixed(1);
       document.getElementById('currentTemp').textContent = data.Temperature.toFixed(1);
       document.getElementById('currentEfficiency').textContent = data.Efficiency.toFixed(1);
     }
-  }catch(e){console.error("Error loading stats:", e);}
+  }catch(e){console.error(e);}
 }
-loadCurrentStats();
-setInterval(loadCurrentStats, 60000);
+loadCurrentStats(); setInterval(loadCurrentStats,60000);
 
-// 🔹 Update the active power report text
 function updateReport(data){
   const report=document.getElementById('predictionReport');
   const p=data.Predicted_Power, t=data.Features['Ambient Temp. (degree centigrade)'], i=data.Features['Geff Reference (W/m2)'];
-  const cap = data.Capacity_W || 303709;
-  const eff = (data.Efficiency !== undefined) ? data.Efficiency.toFixed(2) : ((p / cap) * 100).toFixed(2);
+  const cap=data.Capacity_W||303709;
+  const eff=(data.Efficiency!==undefined)?data.Efficiency.toFixed(2):((p/cap)*100).toFixed(2);
   report.innerHTML=`<strong>📄 Active Power Report:</strong><br>
-  Predicted Power: <strong>${p} W</strong><br>
-  Irradiance: <strong>${i.toFixed(2)} W/m²</strong><br>
-  Temp: <strong>${t.toFixed(1)} °C</strong><br>
-  Efficiency: <strong>${eff}%</strong>`;
+  Power: <strong>${p} W</strong><br>Irradiance: <strong>${i.toFixed(1)} W/m²</strong><br>
+  Temp: <strong>${t.toFixed(1)} °C</strong><br>Eff: <strong>${eff}%</strong>`;
 }
 
-// 🔹 Predict using timestamp
 async function predictByTimestamp(){
   const v=document.getElementById('timestampInput').value;
   if(!v)return alert('Select date/time');
   const r=await fetch(`${API_BASE}/predict/by_time/`,{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
+    method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({timestamp:v.replace('T',' ')+':00'})
   });
   const d=await r.json();
-  if(d.Status==='✅ Success'){
-    updateReport(d);
-    document.getElementById('currentPower').textContent=d.Predicted_Power;
-  }
+  if(d.Status==='✅ Success'){updateReport(d);document.getElementById('currentPower').textContent=d.Predicted_Power;}
   else alert(d.detail||d.Message);
 }
 
-// 🔹 Predict using manual input
 async function predictManual(){
-  const ids=["Geff_Reference_Wm2","Ambient_Temp_degC","Relative_Humidity","Wind_Speed_ms","Temperature_Test_degC","Soiling_Geff","Soiling_Isc","GHI_Wm2","POA1_Wm2","hour","month"];
+  const ids=[
+    "Geff_Reference_Wm2",
+    "Geff_Test_Wm2",
+    "hour",
+    "Module_Surface_Temperature2_degC",
+    "Module_Surface_Temperature1_degC",
+    "Temperature_Reference_Cell_degC",
+    "Temperature_Test_degC",
+    "Soiling_Loss_Index_Isc_percent",
+    "Soiling_Loss_Index_Geff_percent",
+    "Ambient_Temp_degC"
+  ];
   const payload={};for(const id of ids)payload[id]=parseFloat(document.getElementById(id).value);
   if(Object.values(payload).some(v=>isNaN(v)))return alert('Fill all fields');
   const r=await fetch(`${API_BASE}/predict/manual/`,{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(payload)
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)
   });
   const d=await r.json();
-  if(d.Status==='✅ Success'){
-    updateReport(d);
-    document.getElementById('currentPower').textContent=d.Predicted_Power;
-  }
+  if(d.Status==='✅ Success'){updateReport(d);document.getElementById('currentPower').textContent=d.Predicted_Power;}
   else alert(d.detail||d.Message);
 }
 
-// 🔹 Build the charts
 async function makeCharts(){
-  const d1=document.getElementById('dailyChart').getContext('2d');
-  const d2=document.getElementById('monthlyChart').getContext('2d');
+  const res=await fetch(`${API_BASE}/data/monthly_summary/`); 
+  const json=await res.json();
+  
+  const ctx1 = document.getElementById('dailyChart').getContext('2d');
+  const ctx2 = document.getElementById('monthlyChart').getContext('2d');
+  
   if(dailyChart)dailyChart.destroy(); 
   if(monthlyChart)monthlyChart.destroy();
-
-  const res=await fetch(`${API_BASE}/data/monthly_summary/`);
-  const json=await res.json();
-
-  dailyChart=new Chart(d1,{
+  
+  const chartConfig = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {legend: {display: false}},
+    scales: {
+      x: {grid: {color: '#222'}, ticks: {font: {size: 10}}},
+      y: {grid: {color: '#222'}, ticks: {font: {size: 10}}}
+    }
+  };
+  
+  dailyChart=new Chart(ctx1,{
     type:'line',
     data:{
-      labels:json.days.map(d=>`Day ${d}`),
+      labels:json.days.map(d=>`D${d}`),
       datasets:[{
         data:json.power,
         borderColor:'#3b82f6',
         backgroundColor:'rgba(59,130,246,.2)',
         tension:.4,
-        fill:true
+        fill:true,
+        borderWidth:2,
+        pointRadius:1
       }]
     },
-    options:{
-      plugins:{legend:{display:false}},
-      scales:{x:{grid:{color:'#222'}},y:{grid:{color:'#222'}}}
-    }
+    options:chartConfig
   });
-
-  monthlyChart=new Chart(d2,{
+  
+  monthlyChart=new Chart(ctx2,{
     type:'bar',
     data:{
-      labels:json.days.map(d=>`Day ${d}`),
+      labels:json.days.map(d=>`D${d}`),
       datasets:[{
         data:json.power,
         backgroundColor:'#3b82f6'
       }]
     },
-    options:{
-      plugins:{legend:{display:false}},
-      scales:{x:{grid:{color:'#222'}},y:{grid:{color:'#222'}}}
-    }
+    options:chartConfig
   });
 }
 makeCharts();

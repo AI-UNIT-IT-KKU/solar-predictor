@@ -7,11 +7,13 @@ from joblib import load
 import pandas as pd
 import numpy as np
 import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from app.preprocessing import preprocess_new_data
 
-# ======================================
-# 🚀 FastAPI Setup
-# ======================================
+
 app = FastAPI(title="☀️ Solar Power Predictor API", version="2.5")
 
 app.add_middleware(
@@ -22,84 +24,73 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ======================================
-# ⚙️ Config
-# ======================================
 SYSTEM_CAPACITY_W = int(os.getenv("SYSTEM_CAPACITY_W", 303709))
 
-# ======================================
-# 🔹 Load Model & Data
-# ======================================
-model = load("models/final_xgb_model.pkl")
+model = load("models/final_xgb_model_V2.pkl")
 
-weather_df = pd.read_pickle("app/Data/df5_clean.pkl")
+weather_df = pd.read_pickle("app/Data/test_data.pkl")
 weather_df = weather_df.rename(columns={"Time": "timestamp"})
 weather_df["timestamp"] = pd.to_datetime(weather_df["timestamp"], errors="coerce")
 
 print(f"✅ Weather data loaded: {weather_df.shape}")
 
-# ======================================
-# 🔹 Schemas
-# ======================================
+
 class InputData(BaseModel):
     Geff_Reference_Wm2: float
-    Ambient_Temp_degC: float
-    Relative_Humidity: float
-    Wind_Speed_ms: float
-    Temperature_Test_degC: float
-    Soiling_Geff: float
-    Soiling_Isc: float
-    GHI_Wm2: float
-    POA1_Wm2: float
+    Geff_Test_Wm2: float
     hour: int
-    month: int
+    Module_Surface_Temperature2_degC: float
+    Module_Surface_Temperature1_degC: float
+    Temperature_Reference_Cell_degC: float
+    Temperature_Test_degC: float
+    Soiling_Loss_Index_Isc_percent: float
+    Soiling_Loss_Index_Geff_percent: float
+    Ambient_Temp_degC: float
+
 
 class TimestampInput(BaseModel):
     timestamp: str
 
-# ======================================
-# 🔹 Helper
-# ======================================
+
 EXPECTED_COLS = [
-    'Total Solar Irradiance on Inclined Plane POA1 (W/m2)',
-    'Total Solar Irradiance on Horizontal Plane GHI (W/m2)',
     'Geff Reference (W/m2)',
+    'Geff Test (W/m2)',
     'hour',
+    'Module Surface Temperature2 (degree centigrade)',
+    'Module Surface Temperature1 (degree centigrade)',
+    'Temperature Reference Cell (Deg C)',
     'Temperature Test (Deg C)',
     'Soiling Loss Index Isc (%)',
     'Soiling Loss Index Geff (%)',
-    'Ambient Temp. (degree centigrade)',
-    'Relative Humidity (%)',
-    'Wind Speed (m/s)',
-    'month'
+    'Ambient Temp. (degree centigrade)'
 ]
+
 
 def prepare_for_model(df: pd.DataFrame):
     X = df.reindex(columns=EXPECTED_COLS).fillna(0)
     return X
 
-# ======================================
-# 🟢 Manual Prediction
-# ======================================
+
 @app.post("/predict/manual/")
 async def predict_manual(data: InputData):
     try:
         df = pd.DataFrame([{
             "Geff Reference (W/m2)": data.Geff_Reference_Wm2,
-            "Ambient Temp. (degree centigrade)": data.Ambient_Temp_degC,
-            "Relative Humidity (%)": data.Relative_Humidity,
-            "Wind Speed (m/s)": data.Wind_Speed_ms,
-            "Temperature Test (Deg C)": data.Temperature_Test_degC,
-            "Soiling Loss Index Geff (%)": data.Soiling_Geff,
-            "Soiling Loss Index Isc (%)": data.Soiling_Isc,
-            "Total Solar Irradiance on Horizontal Plane GHI (W/m2)": data.GHI_Wm2,
-            "Total Solar Irradiance on Inclined Plane POA1 (W/m2)": data.POA1_Wm2,
+            "Geff Test (W/m2)": data.Geff_Test_Wm2,
             "hour": data.hour,
-            "month": data.month
+            "Module Surface Temperature2 (degree centigrade)": data.Module_Surface_Temperature2_degC,
+            "Module Surface Temperature1 (degree centigrade)": data.Module_Surface_Temperature1_degC,
+            "Temperature Reference Cell (Deg C)": data.Temperature_Reference_Cell_degC,
+            "Temperature Test (Deg C)": data.Temperature_Test_degC,
+            "Soiling Loss Index Isc (%)": data.Soiling_Loss_Index_Isc_percent,
+            "Soiling Loss Index Geff (%)": data.Soiling_Loss_Index_Geff_percent,
+            "Ambient Temp. (degree centigrade)": data.Ambient_Temp_degC
         }])
 
         X_ready = preprocess_new_data(df)
         X_ready = prepare_for_model(X_ready)
+        if "hour" in X_ready.columns:
+            X_ready = X_ready.drop(columns=["hour"])
         y_pred = np.clip(model.predict(X_ready), 0, None)
         predicted_power = float(y_pred[0])
         efficiency = max(0.0, min((predicted_power / SYSTEM_CAPACITY_W) * 100, 100))
@@ -115,9 +106,7 @@ async def predict_manual(data: InputData):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ======================================
-# 🟣 Predict by Timestamp
-# ======================================
+
 @app.post("/predict/by_time/")
 async def predict_by_time(data: TimestampInput):
     try:
@@ -144,20 +133,21 @@ async def predict_by_time(data: TimestampInput):
 
         df = pd.DataFrame([{
             "Geff Reference (W/m2)": row["Geff Reference (W/m2)"],
-            "Ambient Temp. (degree centigrade)": row["Ambient Temp. (degree centigrade)"],
-            "Relative Humidity (%)": row["Relative Humidity (%)"],
-            "Wind Speed (m/s)": row["Wind Speed (m/s)"],
-            "Temperature Test (Deg C)": row["Temperature Test (Deg C)"],
-            "Soiling Loss Index Geff (%)": row["Soiling Loss Index Geff (%)"],
-            "Soiling Loss Index Isc (%)": row["Soiling Loss Index Isc (%)"],
-            "Total Solar Irradiance on Horizontal Plane GHI (W/m2)": row["Total Solar Irradiance on Horizontal Plane GHI (W/m2)"],
-            "Total Solar Irradiance on Inclined Plane POA1 (W/m2)": row["Total Solar Irradiance on Inclined Plane POA1 (W/m2)"],
+            "Geff Test (W/m2)": row["Geff Test (W/m2)"],
             "hour": ts.hour,
-            "month": ts.month
+            "Module Surface Temperature2 (degree centigrade)": row["Module Surface Temperature2 (degree centigrade)"],
+            "Module Surface Temperature1 (degree centigrade)": row["Module Surface Temperature1 (degree centigrade)"],
+            "Temperature Reference Cell (Deg C)": row["Temperature Reference Cell (Deg C)"],
+            "Temperature Test (Deg C)": row["Temperature Test (Deg C)"],
+            "Soiling Loss Index Isc (%)": row["Soiling Loss Index Isc (%)"],
+            "Soiling Loss Index Geff (%)": row["Soiling Loss Index Geff (%)"],
+            "Ambient Temp. (degree centigrade)": row["Ambient Temp. (degree centigrade)"]
         }])
 
         X_ready = preprocess_new_data(df)
         X_ready = prepare_for_model(X_ready)
+        if "hour" in X_ready.columns:
+            X_ready = X_ready.drop(columns=["hour"])
         y_pred = np.clip(model.predict(X_ready), 0, None)
         predicted_power = float(y_pred[0])
         efficiency = max(0.0, min((predicted_power / SYSTEM_CAPACITY_W) * 100, 100))
@@ -173,17 +163,16 @@ async def predict_by_time(data: TimestampInput):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ======================================
-# 📊 Data Endpoints
-# ======================================
+
 @app.get("/data/monthly_summary/")
 async def monthly_summary():
-    """Return average predicted power per day using model."""
     try:
         df = weather_df.copy()
         df["day"] = df["timestamp"].dt.day
         X_ready = preprocess_new_data(df)
         X_ready = prepare_for_model(X_ready)
+        if "hour" in X_ready.columns:
+            X_ready = X_ready.drop(columns=["hour"])
         df["Predicted_Power"] = np.clip(model.predict(X_ready), 0, None)
         summary = df.groupby("day")["Predicted_Power"].mean().reset_index()
         return {
@@ -193,9 +182,9 @@ async def monthly_summary():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/data/current_stats/")
 async def current_stats():
-    """Return current dashboard values from CSV and model."""
     try:
         now = pd.Timestamp.now()
         match = weather_df[
@@ -209,20 +198,21 @@ async def current_stats():
         row = match.iloc[0]
         df = pd.DataFrame([{
             "Geff Reference (W/m2)": row["Geff Reference (W/m2)"],
-            "Ambient Temp. (degree centigrade)": row["Ambient Temp. (degree centigrade)"],
-            "Relative Humidity (%)": row["Relative Humidity (%)"],
-            "Wind Speed (m/s)": row["Wind Speed (m/s)"],
-            "Temperature Test (Deg C)": row["Temperature Test (Deg C)"],
-            "Soiling Loss Index Geff (%)": row["Soiling Loss Index Geff (%)"],
-            "Soiling Loss Index Isc (%)": row["Soiling Loss Index Isc (%)"],
-            "Total Solar Irradiance on Horizontal Plane GHI (W/m2)": row["Total Solar Irradiance on Horizontal Plane GHI (W/m2)"],
-            "Total Solar Irradiance on Inclined Plane POA1 (W/m2)": row["Total Solar Irradiance on Inclined Plane POA1 (W/m2)"],
+            "Geff Test (W/m2)": row["Geff Test (W/m2)"],
             "hour": now.hour,
-            "month": now.month
+            "Module Surface Temperature2 (degree centigrade)": row["Module Surface Temperature2 (degree centigrade)"],
+            "Module Surface Temperature1 (degree centigrade)": row["Module Surface Temperature1 (degree centigrade)"],
+            "Temperature Reference Cell (Deg C)": row["Temperature Reference Cell (Deg C)"],
+            "Temperature Test (Deg C)": row["Temperature Test (Deg C)"],
+            "Soiling Loss Index Isc (%)": row["Soiling Loss Index Isc (%)"],
+            "Soiling Loss Index Geff (%)": row["Soiling Loss Index Geff (%)"],
+            "Ambient Temp. (degree centigrade)": row["Ambient Temp. (degree centigrade)"]
         }])
 
         X_ready = preprocess_new_data(df)
         X_ready = prepare_for_model(X_ready)
+        if "hour" in X_ready.columns:
+            X_ready = X_ready.drop(columns=["hour"])
         predicted_power = float(np.clip(model.predict(X_ready)[0], 0, None))
         temperature = float(row["Ambient Temp. (degree centigrade)"])
         irradiance = float(row["Geff Reference (W/m2)"])
@@ -240,7 +230,5 @@ async def current_stats():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ======================================
-# 🌐 Serve Frontend
-# ======================================
+
 app.mount("/", StaticFiles(directory="app/static", html=True), name="static")
