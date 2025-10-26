@@ -152,6 +152,7 @@ Predict based on a specific timestamp.
   <img src="assets/Comparison.png" width="50%" alt="Comparison">
 </p>
 
+<div align="center">
 
 | Model         | Train RMSE | Test RMSE  | Δ Overfit  | R² (Test) |
 | ------------- | ---------- | ---------- | ---------- | --------- |
@@ -159,12 +160,16 @@ Predict based on a specific timestamp.
 | Ridge (Poly1) | 30,389     | 32,340     | +1,951     | 0.932     |
 | Ridge (Poly2) | 23,091     | 53,566     | +30,475    | 0.649     |
 
-🧠 **XGBoost** offered the best generalization, with balanced bias–variance tradeoff.
+</div>
+
+🧠 **XGBoost** offered the best generalization, with balanced bias–variance tradeoff.  
 Polynomial models, while fitting training data, failed to scale seasonally — suffering from high overfitting.
 
 ---
 
 ## 🌤️ Seasonal Evaluation
+
+<div align="center">
 
 | Season     | Best Model    | RMSE%     | R²    | Observation                  |
 | ---------- | ------------- | --------- | ----- | ---------------------------- |
@@ -172,6 +177,8 @@ Polynomial models, while fitting training data, failed to scale seasonally — s
 | **Spring** | Ridge (Poly1) | 47.6%     | 0.833 | Unstable sunlight transition |
 | **Summer** | XGBoost       | **9.8%**  | 0.991 | Peak performance             |
 | **Fall**   | XGBoost       | **14.0%** | 0.988 | Consistent predictions       |
+
+</div>
 
 ---
 
