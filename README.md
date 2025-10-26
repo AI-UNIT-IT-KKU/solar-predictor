@@ -148,6 +148,11 @@ Predict based on a specific timestamp.
 
 ## 📊 Model Comparison
 
+<p align="center">
+  <img src="assets/Comparison.png" width="50%" alt="Comparison">
+</p>
+
+
 | Model         | Train RMSE | Test RMSE  | Δ Overfit  | R² (Test) |
 | ------------- | ---------- | ---------- | ---------- | --------- |
 | **XGBoost**   | **14,311** | **21,418** | **+7,106** | **0.964** |
