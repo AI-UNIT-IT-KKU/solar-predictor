@@ -21,6 +21,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.metrics import make_scorer, mean_squared_error, r2_score
 from sklearn.feature_selection import mutual_info_regression
 from xgboost import XGBRegressor
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
 sns.set_style("whitegrid")
 
@@ -386,6 +387,54 @@ def run_multiple_timeSeries_gridsearches(models_with_params, X, y, cv_splits=5):
         )
     return results
 
+from sklearn.model_selection import RandomizedSearchCV
+
+# =========================================================
+# ⚙️ Randomized Search (Time-series CV)
+# =========================================================
+def run_timeSeries_randomsearch_cv(
+    model, param_distributions, X, y,
+    name="Model", cv_splits=5,
+    scoring=balanced_rmse, verbose=1, n_jobs=-1,
+    n_iter=30, random_state=42
+):
+    """
+    RandomizedSearchCV wrapper using TimeSeriesSplit.
+    Faster alternative to GridSearchCV for sequential data.
+    """
+    print(f"\n🚀 Running RandomizedSearchCV (TimeSeriesSplit={cv_splits}) for {name} ...")
+    cv = TimeSeriesSplit(n_splits=cv_splits)
+
+    search = RandomizedSearchCV(
+        estimator=model,
+        param_distributions=param_distributions,
+        n_iter=n_iter,
+        scoring=scoring,
+        cv=cv,
+        n_jobs=n_jobs,
+        verbose=verbose,
+        random_state=random_state,
+        refit=True  # train best_estimator_ on full data at the end
+    )
+
+    search.fit(X, y)
+    print(f"✅ Best params for {name}: {search.best_params_}")
+    print(f"🏆 Best CV RMSE: {-search.best_score_:.4f}")
+    return search
+
+
+def run_multiple_timeSeries_randomsearches(models_with_params, X, y, cv_splits=5, n_iter=30):
+    """
+    Run TS-aware RandomizedSearch for multiple models.
+    """
+    results = {}
+    for name, (model, params) in models_with_params.items():
+        results[name] = run_timeSeries_randomsearch_cv(
+            model, params, X, y, name=name, cv_splits=cv_splits, n_iter=n_iter
+        )
+    return results
+
+
 # =========================================================
 # 📈 Evaluation (Temporal CV summary)
 # =========================================================
@@ -467,7 +516,7 @@ def compare_models_results(evals):
         x="Model",
         y="RMSE",
         hue="Dataset",
-        palette=["#4CAF50", "#E74C3C"]
+        palette=["#4CAF50", "#3C94E7"]
     )
 
     plt.title("📉 RMSE Comparison Across Models (Train vs Test)")
@@ -564,25 +613,21 @@ def plot_feature_importance(model, X, title="Feature Importance", top_n=15):
 # =========================================================
 def plot_predictions_vs_actual(model, X, y, title="Predictions vs Actual", sample_size=None):
     """
-    Visualize predictions vs actual values and residuals.
-
-    Args:
-        model: Trained regression model
-        X (pd.DataFrame): Input features
-        y (pd.Series): True target values
-        title (str): Plot title
-        sample_size (int): Optional number of samples to plot
-
-    Returns:
-        dict: Performance metrics (RMSE, MAE, R²)
-        pd.DataFrame: Table with Actual and Predicted values
+    Visualize model performance: predicted vs actual values and residuals.
+    ✅ Final version (display-only):
+        - Removes MAE
+        - Shows random sample nicely
+        - Does not return anything (cleaner output in Jupyter)
     """
-    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+    from sklearn.metrics import mean_squared_error, r2_score
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import pandas as pd
 
     # ✅ Generate predictions
     y_pred = model.predict(X)
 
-    # ✅ Optionally sample for clarity
+    # ✅ Random sample for clarity
     if sample_size and len(y) > sample_size:
         idx = np.random.choice(len(y), sample_size, replace=False)
         y_true_sample = np.array(y)[idx]
@@ -593,13 +638,12 @@ def plot_predictions_vs_actual(model, X, y, title="Predictions vs Actual", sampl
 
     # ✅ Compute metrics
     rmse = np.sqrt(mean_squared_error(y, y_pred))
-    mae = mean_absolute_error(y, y_pred)
     r2 = r2_score(y, y_pred)
 
-    # ✅ Scatter & Residual plots
+    # ✅ Plots
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-    # --- Left: Predicted vs Actual ---
+    # --- Predicted vs Actual ---
     ax1.scatter(y_true_sample, y_pred_sample, alpha=0.5, edgecolor='k', s=30)
     ax1.plot(
         [y_true_sample.min(), y_true_sample.max()],
@@ -612,13 +656,13 @@ def plot_predictions_vs_actual(model, X, y, title="Predictions vs Actual", sampl
     ax1.legend()
     ax1.grid(alpha=0.3)
 
-    # --- Right: Residuals ---
+    # --- Residuals ---
     residuals = y_true_sample - y_pred_sample
     ax2.scatter(y_pred_sample, residuals, alpha=0.5, edgecolor='k', s=30)
     ax2.axhline(y=0, color='r', linestyle='--', lw=2)
     ax2.set_xlabel('Predicted Values', fontsize=12)
     ax2.set_ylabel('Residuals', fontsize=12)
-    ax2.set_title(f'Residual Plot\nMAE={mae:.2f}', fontsize=13)
+    ax2.set_title('Residual Plot', fontsize=13)
     ax2.grid(alpha=0.3)
 
     plt.tight_layout()
@@ -627,18 +671,21 @@ def plot_predictions_vs_actual(model, X, y, title="Predictions vs Actual", sampl
     # ✅ Print metrics summary
     print(f"\n📊 {title} Metrics:")
     print(f"   RMSE: {rmse:.4f}")
-    print(f"   MAE : {mae:.4f}")
     print(f"   R²  : {r2:.4f}")
 
-    # ✅ Create and return DataFrame
+    # ✅ Display random sample (nice formatted)
     results_df = pd.DataFrame({
         "Actual": np.array(y),
         "Predicted": np.array(y_pred),
         "Residual": np.array(y) - np.array(y_pred)
     })
+    sample_to_display = results_df.sample(n=min(10, len(results_df)), random_state=42).reset_index(drop=True)
+    print("\n📋 Random Sample of Predictions:")
+    print(sample_to_display.round(2).to_string(index=False))
 
-    return {"RMSE": rmse, "MAE": mae, "R2": r2}, results_df
-
+# =========================================================
+# ⚡ Evaluate RMSE Against System Capacity
+# =========================================================
 def evaluate_rmse_against_capacity(model, X, y, capacity_kw):
     """
     Evaluate model RMSE as % of system capacity.
