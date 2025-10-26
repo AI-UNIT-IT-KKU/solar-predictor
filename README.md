@@ -18,7 +18,7 @@ For the first time, sunlight wasn’t just bright — it was **predictable**.
 ---
 
 <p align="center">
-  <img width="500" height="308" alt="image" src="https://github.com/user-attachments/assets/8143270e-b3d6-439a-9b7b-226d85c4de77" />
+  <img src="assets/solar-panels.gif" width="75%" alt="solar-panels">
 </p>
 
 ---
@@ -170,24 +170,48 @@ Polynomial models, while fitting training data, failed to scale seasonally — s
 
 ---
 
-## 📈 Visual Insights
+### 📊 Model Performance on Training Data
 
 <p align="center">
   <img src="assets/XGBoost_Train.png" width="75%" alt="Predicted vs Actual Train">
 </p>
 
+🔹 This plot shows how well the predicted values align with the actual ones on the **training dataset**,  
+demonstrating how accurately the model learned the underlying relationships.
 
+---
+
+### 🧪 Model Performance on Test Data
 
 <p align="center">
-  <img src="assets/XGBoost_Test.png" width="45%" alt="XGBoost Test"/>
-  <img src="assets/Act_Pre.png" width="45%" alt="Predicted vs Actual Test"/>
+  <img src="assets/XGBoost_Test.png" width="75%" alt="Predicted vs Actual Test">
 </p>
 
+🔹 A similar plot, but this time on the **test dataset**, used to evaluate the model’s ability to generalize  
+to unseen data beyond the training phase.
 
+---
+
+### 📋 Actual vs Predicted Comparison Table
+
+<p align="center">
+  <img src="assets/Act_Pre.png" width="40%" alt="Actual vs Predicted Comparison">
+</p>
+
+🔹 This chart shows a **side-by-side comparison** between real and predicted outputs,  
+highlighting how closely the model’s estimates match the actual power generation values.
+
+---
+
+### 💡 Feature Importance (XGBoost)
 
 <p align="center">
   <img src="assets/Feature_Imp.png" width="70%" alt="Feature Importance">
 </p>
+
+🔹 This plot displays the **key features** XGBoost relied on most to make predictions —  
+such as solar irradiance and module temperature — helping explain the model’s decision-making process.
+
 
 
 ---
@@ -226,15 +250,6 @@ Reliable, stable, and ready for deployment.
 * Supports energy scheduling and storage decisions
 * Enables grid balancing and sustainability forecasting
 * Tuned for **Middle Eastern climates and conditions**
-
----
-
-## 🏁 Future Vision
-
-* 🛰️ Real-time integration with live weather APIs
-* 🧩 Auto model retraining pipeline
-* ☁️ Dockerized deployment for cloud inference
-* 📊 Comparative dashboards for multi-site solar systems
 
 ---
 
