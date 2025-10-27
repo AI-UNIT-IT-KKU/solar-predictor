@@ -215,6 +215,27 @@ highlighting how closely the model’s estimates match the actual power generati
 
 ---
 
+## 🔬 Train vs Test Performance Comparison
+
+<p align="center">
+  <img src="assets/XGBoost_Train_vs_Test.png" width="75%" alt="Train vs Test Comparison">
+</p>
+
+<div align="center">
+  
+| Dataset         | RMSE (W)      | R²        |
+| --------------- | ------------- | --------- |
+| 🟢 **Training** | **13,435.06** | **0.989** |
+| 🔵 **Test**     | **19,433.48** | **0.977** |
+
+The **train–test alignment** demonstrates strong generalization:
+XGBoost learned the solar generation patterns effectively while maintaining robustness on unseen data.
+Residuals are minimal and physically reasonable — a hallmark of a stable, production-ready model.
+
+</div>
+
+---
+
 ### 💡 Feature Importance (XGBoost)
 
 <p align="center">
