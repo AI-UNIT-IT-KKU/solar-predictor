@@ -712,6 +712,87 @@ def evaluate_rmse_against_capacity(model, X, y, capacity_kw):
         "RMSE_%": rmse_pct,
         "MAE_%": mae_pct
     }
+# =========================================================
+# 📊 Plot Predictions: Train vs Tes
+# =========================================================
+def plot_predictions_train_vs_test(model, X_train, y_train, X_test, y_test, title="Train vs Test Comparison", sample_size=300):
+    """
+    📊 Compare model predictions on Train vs Test data.
+    Draws both in one figure with metrics and random sampling for clarity.
+    Works perfectly with XGBoost or any regression model.
+    """
+
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from sklearn.metrics import mean_squared_error, r2_score
+    import pandas as pd
+
+    # ✅ Generate predictions
+    y_pred_train = model.predict(X_train)
+    y_pred_test = model.predict(X_test)
+
+    # ✅ Random sampling (to avoid overplotting)
+    if sample_size:
+        idx_train = np.random.choice(len(y_train), min(sample_size, len(y_train)), replace=False)
+        idx_test = np.random.choice(len(y_test), min(sample_size, len(y_test)), replace=False)
+    else:
+        idx_train = np.arange(len(y_train))
+        idx_test = np.arange(len(y_test))
+
+    # ✅ Compute metrics
+    rmse_train = np.sqrt(mean_squared_error(y_train, y_pred_train))
+    r2_train = r2_score(y_train, y_pred_train)
+    rmse_test = np.sqrt(mean_squared_error(y_test, y_pred_test))
+    r2_test = r2_score(y_test, y_pred_test)
+
+    # ✅ Combined scatter plot (Predicted vs Actual)
+    plt.figure(figsize=(8, 8))
+    plt.scatter(
+        y_train.iloc[idx_train], y_pred_train[idx_train],
+        alpha=0.4, color='royalblue',
+        label=f"Train (RMSE={rmse_train:.1f}, R²={r2_train:.3f})"
+    )
+    plt.scatter(
+        y_test.iloc[idx_test], y_pred_test[idx_test],
+        alpha=0.5, color='tomato',
+        label=f"Test (RMSE={rmse_test:.1f}, R²={r2_test:.3f})"
+    )
+
+    # ✅ Perfect prediction line
+    all_vals = np.concatenate([y_train, y_test])
+    lims = [all_vals.min(), all_vals.max()]
+    plt.plot(lims, lims, 'k--', lw=2, label="Perfect Prediction")
+
+    # ✅ Labels and layout
+    plt.xlabel("Actual Power (W)")
+    plt.ylabel("Predicted Power (W)")
+    plt.title(title)
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    # ✅ Print numeric summary
+    print(f"\n📊 {title} Metrics:")
+    print(f" 🟢 TRAIN → RMSE={rmse_train:,.2f}, R²={r2_train:.3f}")
+    print(f" 🔵 TEST  → RMSE={rmse_test:,.2f}, R²={r2_test:.3f}")
+
+    # ✅ Display separate random samples (avoids length mismatch)
+    print("\n📋 Random sample from TRAIN predictions:")
+    train_df = pd.DataFrame({
+        "Actual_Train": np.array(y_train),
+        "Pred_Train": np.array(y_pred_train),
+        "Residual_Train": np.array(y_train) - np.array(y_pred_train)
+    }).sample(n=min(10, len(y_train)), random_state=42)
+    print(train_df.round(2).to_string(index=False))
+
+    print("\n📋 Random sample from TEST predictions:")
+    test_df = pd.DataFrame({
+        "Actual_Test": np.array(y_test),
+        "Pred_Test": np.array(y_pred_test),
+        "Residual_Test": np.array(y_test) - np.array(y_pred_test)
+    }).sample(n=min(10, len(y_test)), random_state=42)
+    print(test_df.round(2).to_string(index=False))
 
 # =========================================================
 # 💾 Save / Load
